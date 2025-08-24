@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import textwrap
 
+# ===== Ratings mapping (unchanged) =====
 ROLE_SCORE = {"newer/learning": 1, "steady/reliable": 2, "confident/impactful": 3}
 ENERGY_SCORE = {"Low": 0, "Medium": 1, "High": 2}
 
+# ===== App defaults (minutes-free; 2 preference schema OK) =====
 DEFAULT_CONFIG = {
     "total_series": 8,
     "varsity_penalty": 0.3,          # Ignored unless 'varsity_minutes_recent' exists
@@ -30,8 +32,9 @@ def load_formations_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-# --------- Alias support (unchanged from prior fix) ---------
+# ===== Position aliases (visual eligibility / starters pickers) =====
 _POS_ALIASES = {
+    # Defense twins
     "DT1": ["DT1", "DT"],
     "DT2": ["DT2", "DT"],
     "LCB": ["LCB", "CB"],
@@ -42,6 +45,7 @@ _POS_ALIASES = {
     "RDE": ["RDE", "DE"],
     "NT": ["NT"],
     "MLB": ["MLB", "LB_MIKE"],
+    # Alt 5–3
     "DE_L": ["DE_L", "DE", "LDE"],
     "DE_R": ["DE_R", "DE", "RDE"],
     "LB_SAM": ["LB_SAM", "OLB"],
@@ -51,18 +55,22 @@ _POS_ALIASES = {
     "CB_R": ["CB_R", "CB", "RCB"],
     "FS": ["FS", "S"],
     "S": ["S", "FS"],
+    # Offense pairs
     "WR1": ["WR1", "WR"],
     "WR2": ["WR2", "WR"],
     "RB1": ["RB1", "HB", "RB", "AB"],
     "RB2": ["RB2", "HB", "RB", "AB"],
 }
+
 def aliases_for_position(pos: str) -> set[str]:
+    """Return accepted roster tokens for a given formation slot name."""
     p = str(pos).strip()
     vals = set([p])
     if p in _POS_ALIASES:
         vals.update(_POS_ALIASES[p])
     return vals
 
+# ===== Default formations (used in sidebar and stage 2) =====
 DEFAULT_FORMATIONS_YAML = textwrap.dedent("""\
 Offense:
   OFFENSE_11:
@@ -117,6 +125,7 @@ Defense:
     - CB_R
 """)
 
+# ===== Sample roster compatible with 2-preference schema =====
 DEFAULT_SAMPLE_ROSTER_CSV = textwrap.dedent("""\
 player_id,name,role_today,energy_today,off_pos_1,off_pos_2,def_pos_1,def_pos_2,notes
 1,Alex Carter,steady/reliable,High,QB,WR,LCB,S,
@@ -143,8 +152,8 @@ player_id,name,role_today,energy_today,off_pos_1,off_pos_2,def_pos_1,def_pos_2,n
 22,Vic Xu,steady/reliable,Medium,RG,RT,DT,DT,
 """)
 
+# ===== 2025 Visual Theme (wrapped in <style>) =====
 def ui_css() -> str:
-    # Inject Google Font + full theme (visual-only)
     return """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -166,7 +175,9 @@ html, body { background:
   radial-gradient(50vw 35vh at 110% -20%, rgba(17, 23, 60, .5), transparent 60%),
   linear-gradient(180deg,#0a0e13,#0e1219 220px) !important;
 }
-body, .stApp, .block-container { font-family: Inter, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--text); }
+body, .stApp, .block-container {
+  font-family: Inter, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--text);
+}
 .block-container { padding-top: 1rem; max-width: 1200px; }
 
 .card{
@@ -183,8 +194,10 @@ body, .stApp, .block-container { font-family: Inter, system-ui, Segoe UI, Roboto
 .stButton > button, .stDownloadButton > button {
   background: rgba(10,14,22,.8); border:1px solid var(--line); color: var(--text);
   border-radius:12px; padding:10px 12px;
+  transition: transform .08s ease, box-shadow .15s ease, background-color .2s ease, opacity .2s ease;
 }
 .stButton > button:hover, .stDownloadButton > button:hover { transform: translateY(-1px); }
+.stButton > button:active, .stDownloadButton > button:active { transform: translateY(0); }
 
 .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
   background: linear-gradient(180deg, hsl(var(--accent-h),85%,58%), hsl(var(--accent-h),80%,50%));
@@ -192,14 +205,19 @@ body, .stApp, .block-container { font-family: Inter, system-ui, Segoe UI, Roboto
 }
 
 .stRadio > div { gap: 8px; }
-.stRadio label { padding:8px 10px; border:1px solid var(--line); border-radius:999px; background:var(--muted); }
+.stRadio label {
+  padding:8px 10px; border:1px solid var(--line); border-radius:999px; background:var(--muted);
+}
 .stRadio .st-af { display:none; } /* hide default dots */
 
 input, select, textarea { color: var(--text) !important; }
 [data-baseweb="select"] > div { background: rgba(10,14,22,.8) !important; border-radius: 12px !important; }
 
 .stDataFrame, .stDataEditor { font-size: 0.95rem; }
-thead tr th { background: linear-gradient(180deg,rgba(22,29,44,.9),rgba(17,23,35,.9)) !important; border-bottom: 1px solid var(--line) !important; }
+thead tr th {
+  background: linear-gradient(180deg,rgba(22,29,44,.9),rgba(17,23,35,.9)) !important;
+  border-bottom: 1px solid var(--line) !important;
+}
 tbody tr td { border-bottom: 1px solid var(--line) !important; }
 tbody tr:hover td { background: rgba(255,255,255,.02) !important; }
 
