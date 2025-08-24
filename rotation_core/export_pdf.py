@@ -16,7 +16,6 @@ def render_pdf(category: str, formation_name: str, positions: List[str], grid_df
     c.setFont("Helvetica-Bold", 16)
     c.drawString(40, page_size[1] - 40, title)
 
-    # Build table data
     cols = ["Position"] + list(grid_df.columns)
     data = [cols]
     for pos in grid_df.index:
@@ -34,7 +33,6 @@ def render_pdf(category: str, formation_name: str, positions: List[str], grid_df
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
     ]))
 
-    # automatic width/height
     table_w, table_h = t.wrapOn(c, page_size[0] - 80, page_size[1] - 100)
     x = 40
     y = page_size[1] - 80 - table_h
