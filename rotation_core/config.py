@@ -30,6 +30,44 @@ def load_formations_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+# -------- Position aliases (key = formation slot; values = allowed roster tokens) --------
+# Defense
+_POS_ALIASES = {
+    "DT1": ["DT1", "DT"],
+    "DT2": ["DT2", "DT"],
+    "LCB": ["LCB", "CB"],
+    "RCB": ["RCB", "CB"],
+    "OLB1": ["OLB1", "OLB"],
+    "OLB2": ["OLB2", "OLB"],
+    "LDE": ["LDE", "DE"],
+    "RDE": ["RDE", "DE"],
+    "NT": ["NT"],
+    "MLB": ["MLB", "LB_MIKE"],
+    # Alt 5-3 labels
+    "DE_L": ["DE_L", "DE", "LDE"],
+    "DE_R": ["DE_R", "DE", "RDE"],
+    "LB_SAM": ["LB_SAM", "OLB"],
+    "LB_WILL": ["LB_WILL", "OLB"],
+    "LB_MIKE": ["LB_MIKE", "MLB"],
+    "CB_L": ["CB_L", "CB", "LCB"],
+    "CB_R": ["CB_R", "CB", "RCB"],
+    "FS": ["FS", "S"],
+    "S": ["S", "FS"],
+    # Offense (for completeness if you use WR1/WR2 or RB1/RB2)
+    "WR1": ["WR1", "WR"],
+    "WR2": ["WR2", "WR"],
+    "RB1": ["RB1", "HB", "RB", "AB"],
+    "RB2": ["RB2", "HB", "RB", "AB"],
+}
+
+def aliases_for_position(pos: str) -> set[str]:
+    """Return the set of acceptable roster tokens for a given formation slot name."""
+    p = str(pos).strip()
+    vals = set([p])
+    if p in _POS_ALIASES:
+        vals.update(_POS_ALIASES[p])
+    return vals
+
 DEFAULT_FORMATIONS_YAML = textwrap.dedent("""\
     Offense:
       OFFENSE_11:
@@ -88,27 +126,27 @@ DEFAULT_FORMATIONS_YAML = textwrap.dedent("""\
 DEFAULT_SAMPLE_ROSTER_CSV = textwrap.dedent("""\
 player_id,name,role_today,energy_today,off_pos_1,off_pos_2,def_pos_1,def_pos_2,notes
 1,Alex Carter,steady/reliable,High,QB,WR,LCB,S,
-2,Blake Diaz,confident/impactful,Medium,HB,AB,OLB1,MLB,
-3,Casey Ellis,newer/learning,High,LG,RG,DT2,NT,
-4,Drew Fox,steady/reliable,Medium,WR,Slot,LCB,RCB,
-5,Emery Gray,confident/impactful,High,LT,LG,LDE,DT1,
-6,Fin Hayes,newer/learning,Medium,TE,WR,LB_SAM,LB_MIKE,needs reps
-7,Gabe Irwin,steady/reliable,Low,AB,HB,OLB2,OLB1,
-8,Harper Jones,newer/learning,Medium,C,LG,NT,DT2,
-9,Izzy Kim,steady/reliable,High,RG,RT,DT1,DT2,
-10,Jordan Lee,confident/impactful,High,WR,Slot,LCB,RCB,
-11,Kai Miller,steady/reliable,Medium,RT,RG,RDE,LDE,
-12,Lane Novak,newer/learning,High,AB,HB,MLB,OLB1,
-13,Morgan Ortiz,newer/learning,Medium,HB,AB,DT2,NT,
-14,Nico Park,steady/reliable,Low,LG,C,DT1,RDE,
+2,Blake Diaz,confident/impactful,Medium,HB,AB,OLB,MLB,
+3,Casey Ellis,newer/learning,High,LG,RG,DT,NT,
+4,Drew Fox,steady/reliable,Medium,WR,Slot,CB,CB,
+5,Emery Gray,confident/impactful,High,LT,LG,DE,DT,
+6,Fin Hayes,newer/learning,Medium,TE,WR,OLB,LB_MIKE,needs reps
+7,Gabe Irwin,steady/reliable,Low,AB,HB,OLB,OLB,
+8,Harper Jones,newer/learning,Medium,C,LG,NT,DT,
+9,Izzy Kim,steady/reliable,High,RG,RT,DT,DT,
+10,Jordan Lee,confident/impactful,High,WR,Slot,CB,CB,
+11,Kai Miller,steady/reliable,Medium,RT,RG,DE,DE,
+12,Lane Novak,newer/learning,High,AB,HB,MLB,OLB,
+13,Morgan Ortiz,newer/learning,Medium,HB,AB,DT,NT,
+14,Nico Park,steady/reliable,Low,LG,C,DT,DE,
 15,Owen Quinn,confident/impactful,Medium,QB,WR,LCB,S,
-16,Parker Reed,newer/learning,Medium,TE,HB,LB_WILL,LB_SAM,
-17,Quinn Shaw,steady/reliable,High,WR,Slot,RCB,LCB,
-18,Riley Tran,newer/learning,Medium,C,RG,NT,DT2,
-19,Sky Underwood,steady/reliable,High,LT,LG,LDE,DT1,
-20,Tate Vega,confident/impactful,High,HB,AB,MLB,OLB1,
+16,Parker Reed,newer/learning,Medium,TE,HB,OLB,OLB,
+17,Quinn Shaw,steady/reliable,High,WR,Slot,CB,CB,
+18,Riley Tran,newer/learning,Medium,C,RG,NT,DT,
+19,Sky Underwood,steady/reliable,High,LT,LG,DE,DT,
+20,Tate Vega,confident/impactful,High,HB,AB,MLB,OLB,
 21,Uma Wyatt,newer/learning,Low,Slot,WR,S,LCB,
-22,Vic Xu,steady/reliable,Medium,RG,RT,DT1,DT2,
+22,Vic Xu,steady/reliable,Medium,RG,RT,DT,DT,
 """)
 
 def ui_css() -> str:
