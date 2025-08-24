@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .config import ROLE_SCORE, ENERGY_SCORE
+from .io import detect_pref_cols
 
 ALLOWED_ROLES = set(ROLE_SCORE.keys())
 ALLOWED_ENERGIES = set(ENERGY_SCORE.keys())
@@ -14,8 +15,8 @@ def validate_roster(df: pd.DataFrame) -> List[str]:
     required = [
         "player_id","name","season_minutes","varsity_minutes_recent",
         "role_today","energy_today",
-        "off_pos_1","off_pos_2","off_pos_3","off_pos_4",
-        "def_pos_1","def_pos_2","def_pos_3","def_pos_4",
+        "off_pos_1","off_pos_2",
+        "def_pos_1","def_pos_2",
         "notes"
     ]
     missing = [c for c in required if c not in df.columns]
@@ -23,12 +24,10 @@ def validate_roster(df: pd.DataFrame) -> List[str]:
         errs.append(f"Missing required columns: {missing}")
         return errs
 
-    # unique player_id
     if df["player_id"].astype(str).duplicated().any():
         dupes = df[df["player_id"].astype(str).duplicated()]["player_id"].astype(str).tolist()
         errs.append(f"Duplicate player_id detected: {', '.join(dupes)}")
 
-    # allowed role/energy
     bad_roles = df[~df["role_today"].isin(ALLOWED_ROLES)]
     if not bad_roles.empty:
         rows = ", ".join(str(i+2) for i in bad_roles.index.tolist())
@@ -42,17 +41,15 @@ def validate_roster(df: pd.DataFrame) -> List[str]:
     return errs
 
 def build_eligibility_maps(df: pd.DataFrame, category: str) -> Dict[str, Dict[str, int]]:
-    """Return mapping player_id -> {position: pref_rank(1..4)} for selected category."""
-    prefix = "off" if category == "Offense" else "def"
-    cols = [f"{prefix}_pos_{i}" for i in range(1,5)]
+    prefix_cols = detect_pref_cols(df, category)
     result: Dict[str, Dict[str, int]] = {}
     for _, r in df.iterrows():
         pid = str(r["player_id"])
         elig: Dict[str, int] = {}
-        for i, c in enumerate(cols, start=1):
+        for i, c in enumerate(prefix_cols, start=1):
             pos = str(r[c]).strip()
             if pos:
-                elig[pos] = min(elig.get(pos, i), i)  # keep best
+                elig[pos] = min(elig.get(pos, i), i)
         result[pid] = elig
     return result
 
@@ -101,8 +98,7 @@ def detect_duplicate_starters(start_map: Dict[str, Optional[str]]) -> List[str]:
 
 def series_grid_to_df(assignment: List[Dict[str, Optional[str]]], positions: List[str], roster_df: pd.DataFrame, category: str) -> pd.DataFrame:
     pid_to_name = dict(zip(roster_df["player_id"].astype(str), roster_df["name"]))
-    prefix = "off" if category == "Offense" else "def"
-    pref_cols = [f"{prefix}_pos_{i}" for i in range(1,5)]
+    pref_cols = detect_pref_cols(roster_df, category)
     pref_map: Dict[str, Dict[str, int]] = {}
     for _, r in roster_df.iterrows():
         pid = str(r["player_id"])
@@ -112,7 +108,6 @@ def series_grid_to_df(assignment: List[Dict[str, Optional[str]]], positions: Lis
             if p:
                 pref_map[pid][p] = i
 
-    # Build grid
     data = {}
     for s_idx, s_assign in enumerate(assignment, start=1):
         col = []
@@ -139,15 +134,13 @@ def fairness_dashboard_df(assignment: List[Dict[str, Optional[str]]], roster_df:
             if pid is None:
                 continue
             if pid in used:
-                # shouldn’t happen; but guard
                 continue
             counts[str(pid)] += 1
             used.add(pid)
 
     rows = []
-    T = sum(1 for s in assignment for _ in s.values())  # slots
+    T = sum(1 for s in assignment for _ in s.values())
     P = len(pid_to_name)
-    warn = check_impossible_minimums(T, P)
 
     for pid, name in pid_to_name.items():
         vmins = int(roster_df.loc[roster_df["player_id"].astype(str) == pid, "varsity_minutes_recent"].iloc[0])
@@ -176,10 +169,8 @@ def fairness_dashboard_df(assignment: List[Dict[str, Optional[str]]], roster_df:
 
 def assignment_badges_for_cell(pid: str, pos: str, pref_map: Dict[str, Dict[str, int]]) -> str:
     badges = []
-    # preference rank
     rank = pref_map.get(str(pid), {}).get(pos, None)
+    # With 2-preference CSV, we only badge if beyond listed prefs (rare). Keep ⚠ for rank >=3.
     if rank is not None and rank >= 3:
         badges.append("⚠")
-    # Role newer -> (R) would require extra df; we skip here and keep flag in dashboard
-    # Varsity -> in dashboard
     return " ".join(badges)
