@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, validator
 
 class AppConfig(BaseModel):
     total_series: int = 8
-    varsity_penalty: float = 0.3
+    varsity_penalty: float = 0.3  # Ignored unless 'varsity_minutes_recent' exists
     evenness_cap_enabled: bool = True
     evenness_cap_value: int = 1
     preference_weights: List[float] = Field(default_factory=lambda: [1.0, 0.6])
