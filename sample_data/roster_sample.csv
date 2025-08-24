@@ -1,6 +1,0 @@
-# FILE: sample_data/roster_sample.csv
-Name,Off1,Off2,Off3,Off4,Def1,Def2,Def3,Def4,RoleToday,EnergyToday,SatLast,IsPresent
-Alice,QB,AB,WR,Slot,NT,LDT,RDT,LDE,Driver,High,0,1
-Bob,AB,WR,Slot,HB,LDT,RDT,LDE,NT,Connector,Medium,0,1
-Charlie,WR,Slot,HB,AB,LDE,RDE,MLB,OLB,Explorer,Low,0,1
-Diana,Slot,WR,AB,HB,MLB,OLB,SS,FS,Explorer,High,1,1
