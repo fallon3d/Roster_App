@@ -24,16 +24,13 @@ from rotation_core.io import (
     detect_pref_cols,
 )
 from rotation_core.models import AppConfig
-from rotation_core.ratings import compute_strength_index_series
 from rotation_core.constraints import (
     validate_roster,
-    build_eligibility_maps,
     compute_fairness_bounds,
     check_impossible_minimums,
     detect_duplicate_starters,
     series_grid_to_df,
     fairness_dashboard_df,
-    assignment_badges_for_cell,
 )
 from rotation_core.scheduler import schedule_rotation
 from rotation_core.export_pdf import render_pdf
@@ -69,16 +66,16 @@ if "random_seed" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ Config")
     total_series = st.number_input("Total series", min_value=1, max_value=40, value=8, step=1)
-    varsity_penalty = st.number_input("Varsity penalty (slots)", min_value=0.0, max_value=2.0, value=0.3, step=0.1)
+    # Varsity penalty is ignored unless the optional column exists (your CSV won’t have it)
+    varsity_penalty = st.number_input("Varsity penalty (ignored without 'varsity_minutes_recent')", min_value=0.0, max_value=2.0, value=0.3, step=0.1)
     evenness_cap_enabled = st.checkbox("Enforce Evenness Cap (± cap)", value=True)
     evenness_cap_value = st.number_input("Evenness Cap (±)", min_value=0, max_value=4, value=1, step=1)
 
-    # Determine how many preference columns exist in the uploaded roster (default to 2)
+    # Detect preference column count from uploaded roster (default to 2)
     pref_count = 2
     if st.session_state.roster_df is not None:
         off_cols = detect_pref_cols(st.session_state.roster_df, "Offense")
         def_cols = detect_pref_cols(st.session_state.roster_df, "Defense")
-        # Use max across sides for the UI hint (usually 2 now)
         pref_count = max(len(off_cols), len(def_cols)) or 2
 
     default_pw = ",".join(["1.0", "0.6"][:pref_count])
@@ -213,7 +210,6 @@ with tab2:
             st.caption("Pick your Series 1 starters. Leave any position blank; the solver will smart-fill it.")
             start_map = {}
 
-            # Determine eligible columns dynamically
             elig_cols = detect_pref_cols(df, category)
             for pos in positions:
                 mask = df[elig_cols].apply(lambda r: pos in set(r.values), axis=1)
@@ -318,7 +314,7 @@ with tab4:
                 )
 
                 st.dataframe(grid_df, use_container_width=True, height=min(600, 50 + 28 * len(grid_df)))
-                st.caption("Badge: (⚠) indicates beyond top preferences (with 2-preference CSV this rarely appears).")
+                st.caption("Badge: (⚠) would indicate a >2nd preference, but your CSV only lists 2 preferences.")
 
 
 # ---------- Tab 5: Fairness Dashboard ----------
