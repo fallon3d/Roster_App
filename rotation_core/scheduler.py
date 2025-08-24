@@ -7,7 +7,6 @@ import pandas as pd
 from .models import AppConfig, SolveResult
 from .solver_ilp import solve_ilp
 from .solver_heuristic import solve_greedy
-from .constraints import build_eligibility_maps
 
 def schedule_rotation(
     df: pd.DataFrame,
@@ -18,7 +17,6 @@ def schedule_rotation(
     excluded_ids: Set[str],
     rng: np.random.Generator,
 ) -> SolveResult:
-    # Try ILP first
     assignment, err = solve_ilp(
         df=df,
         positions=formation_positions,
@@ -35,7 +33,6 @@ def schedule_rotation(
     if assignment is not None:
         return SolveResult(assignment=assignment)
 
-    # Fallback to heuristic
     assignment2 = solve_greedy(
         df=df,
         positions=formation_positions,
@@ -48,8 +45,6 @@ def schedule_rotation(
         excluded_ids=excluded_ids,
         rng=rng,
     )
-
-    # Check at least filled; if many Nones, report
     empties = sum(1 for s in assignment2 for v in s.values() if v is None)
     if empties > 0:
         return SolveResult(assignment=assignment2, error=f"Heuristic filled with {empties} empty slots due to eligibility/availability limits.")
