@@ -6,7 +6,7 @@ import pandas as pd
 import pulp
 
 from .ratings import compute_strength_index_series
-from .constraints import compute_fairness_bounds, build_eligibility_maps
+from .constraints import compute_fairness_bounds, build_eligibility_maps  # build_eligibility_maps not needed here; we infer by dual-maps
 
 def solve_ilp(
     df: pd.DataFrame,
@@ -33,21 +33,33 @@ def solve_ilp(
     strength = compute_strength_index_series(adf).to_numpy()
     pid_to_strength = dict(zip(pid_list, strength))
 
-    minutes = adf["season_minutes"].to_numpy(dtype=float)
-    minutes_norm = (minutes - minutes.min()) / (minutes.max() - minutes.min()) if minutes.max() > minutes.min() else np.zeros_like(minutes)
+    # Minutes are optional; if absent, set zeros
+    if "season_minutes" in adf.columns:
+        minutes = adf["season_minutes"].to_numpy(dtype=float)
+        minutes_norm = (minutes - minutes.min()) / (minutes.max() - minutes.min()) if minutes.max() > minutes.min() else np.zeros_like(minutes)
+    else:
+        minutes_norm = np.zeros(P, dtype=float)
     pid_to_minutes_norm = dict(zip(pid_list, minutes_norm))
 
     rand_jitter = rng.uniform(0, 0.01, size=P)
     pid_to_jitter = dict(zip(pid_list, rand_jitter))
 
-    elig_off = build_eligibility_maps(adf, "Offense")
-    elig_def = build_eligibility_maps(adf, "Defense")
-
+    # Build eligibility from both sides and consult whichever contains the position
     def pref_rank(pid: str, pos: str) -> Optional[int]:
-        if pos in elig_off.get(pid, {}):
-            return elig_off[pid][pos]
-        if pos in elig_def.get(pid, {}):
-            return elig_def[pid][pos]
+        # Offense prefs
+        for i in range(1, 9):
+            col = f"off_pos_{i}"
+            if col in adf.columns:
+                val = adf.loc[adf["player_id"].astype(str) == pid, col]
+                if not val.empty and str(val.iloc[0]).strip() == pos:
+                    return i
+        # Defense prefs
+        for i in range(1, 9):
+            col = f"def_pos_{i}"
+            if col in adf.columns:
+                val = adf.loc[adf["player_id"].astype(str) == pid, col]
+                if not val.empty and str(val.iloc[0]).strip() == pos:
+                    return i
         return None
 
     prob = pulp.LpProblem("rotation_assignment", pulp.LpMaximize)
@@ -56,8 +68,7 @@ def solve_ilp(
     for pid in pid_list:
         for s in range(S):
             for pos in POS:
-                allowed = pref_rank(pid, pos) is not None
-                if not allowed:
+                if pref_rank(pid, pos) is None:
                     continue
                 X[(pid, s, pos)] = pulp.LpVariable(f"x_{pid}_{s}_{pos}", cat="Binary")
 
@@ -67,7 +78,7 @@ def solve_ilp(
         st = pid_to_strength[pid]
         mn = pid_to_minutes_norm[pid]
         jt = pid_to_jitter[pid]
-        base = st - 0.5 * mn + jt
+        base = st - 0.0 * mn + jt  # minutes not used; keep structure
         for s in range(S):
             for pos in POS:
                 if (pid, s, pos) not in X:
@@ -91,8 +102,12 @@ def solve_ilp(
 
     T = len(POS) * S
     for pid in pid_list:
-        vmins = int(adf.loc[adf["player_id"].astype(str) == pid, "varsity_minutes_recent"].iloc[0])
-        has_v = vmins > 0
+        if "varsity_minutes_recent" in adf.columns:
+            vmins = int(adf.loc[adf["player_id"].astype(str) == pid, "varsity_minutes_recent"].iloc[0])
+            has_v = vmins > 0
+        else:
+            has_v = False
+
         lb, ub = compute_fairness_bounds(
             positions_count=len(POS),
             total_series=S,
