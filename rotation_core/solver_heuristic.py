@@ -19,11 +19,6 @@ def solve_greedy(
     excluded_ids: Set[str],
     rng: np.random.Generator,
 ) -> List[Dict[str, Optional[str]]]:
-    """Heuristic fallback:
-    - Fill Series 1 honoring coach picks, smart-fill blanks
-    - Then for series 2..N, greedily assign per position:
-      choose eligible player with (lowest assigned so far, then highest score)
-    """
     adf = df[~df["player_id"].astype(str).isin(excluded_ids)].copy()
     pid_list = adf["player_id"].astype(str).tolist()
     strength = compute_strength_index_series(adf)
@@ -32,6 +27,8 @@ def solve_greedy(
     elig_off = build_eligibility_maps(adf, "Offense")
     elig_def = build_eligibility_maps(adf, "Defense")
 
+    last_weight = preference_weights[-1] if preference_weights else 0.0
+
     def pref_rank(pid: str, pos: str) -> Optional[int]:
         if pos in elig_off.get(pid, {}):
             return elig_off[pid][pos]
@@ -39,27 +36,33 @@ def solve_greedy(
             return elig_def[pid][pos]
         return None
 
+    def weight_for_rank(r: Optional[int]) -> float:
+        if r is None:
+            return 0.0
+        return preference_weights[r - 1] if r - 1 < len(preference_weights) else last_weight
+
     assigned_counts = {pid: 0 for pid in pid_list}
 
     S = total_series
     POS = positions
     assignment: List[Dict[str, Optional[str]]] = []
 
-    # Series 1
+    # Series 1 with coach picks
     used = set()
     ser0: Dict[str, Optional[str]] = {}
     for pos in POS:
         pid = starting_lineup.get(pos)
-        if pid and pid in pid_list and pref_rank(pid, pos) is not None and pid not in used:
+        r = pref_rank(pid, pos) if pid else None
+        if pid and pid in pid_list and r is not None and pid not in used:
             ser0[pos] = pid
             used.add(pid)
             assigned_counts[pid] += 1
         else:
             ser0[pos] = None
-    # Smart-fill blanks
+
+    # Smart fill for blanks
     for pos in POS:
         if ser0[pos] is None:
-            # pick the best eligible not used
             cands = []
             for pid in pid_list:
                 if pid in used:
@@ -67,7 +70,7 @@ def solve_greedy(
                 r = pref_rank(pid, pos)
                 if r is None:
                     continue
-                w = preference_weights[r - 1]
+                w = weight_for_rank(r)
                 score = pid_to_strength[pid] * w + rng.uniform(0, 0.01)
                 cands.append((score, pid))
             if cands:
@@ -82,8 +85,6 @@ def solve_greedy(
     for s in range(1, S):
         used = set()
         ser: Dict[str, Optional[str]] = {}
-        # fairness-first: compute min assigned so far
-        min_assigned = min(assigned_counts.values()) if assigned_counts else 0
         for pos in POS:
             cands = []
             for pid in pid_list:
@@ -92,8 +93,7 @@ def solve_greedy(
                 r = pref_rank(pid, pos)
                 if r is None:
                     continue
-                w = preference_weights[r - 1]
-                # prioritize those with fewer assignments
+                w = weight_for_rank(r)
                 fairness_priority = -assigned_counts[pid]
                 score = (pid_to_strength[pid] * w) + fairness_priority + rng.uniform(0, 0.01)
                 cands.append((score, pid))
