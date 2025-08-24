@@ -13,7 +13,7 @@ ALLOWED_ENERGIES = set(ENERGY_SCORE.keys())
 def validate_roster(df: pd.DataFrame) -> List[str]:
     errs = []
     required = [
-        "player_id","name","season_minutes","varsity_minutes_recent",
+        "player_id","name",
         "role_today","energy_today",
         "off_pos_1","off_pos_2",
         "def_pos_1","def_pos_2",
@@ -39,19 +39,6 @@ def validate_roster(df: pd.DataFrame) -> List[str]:
         errs.append(f"Invalid energy_today at rows: {rows}")
 
     return errs
-
-def build_eligibility_maps(df: pd.DataFrame, category: str) -> Dict[str, Dict[str, int]]:
-    prefix_cols = detect_pref_cols(df, category)
-    result: Dict[str, Dict[str, int]] = {}
-    for _, r in df.iterrows():
-        pid = str(r["player_id"])
-        elig: Dict[str, int] = {}
-        for i, c in enumerate(prefix_cols, start=1):
-            pos = str(r[c]).strip()
-            if pos:
-                elig[pos] = min(elig.get(pos, i), i)
-        result[pid] = elig
-    return result
 
 def compute_fairness_bounds(
     positions_count: int,
@@ -117,9 +104,10 @@ def series_grid_to_df(assignment: List[Dict[str, Optional[str]]], positions: Lis
                 col.append("")
                 continue
             name = pid_to_name.get(str(pid), f"#{pid}")
-            badges = assignment_badges_for_cell(pid, pos, pref_map)
-            cell = f"{name} {badges}".strip()
-            col.append(cell)
+            # With 2 preferences, no badge needed unless >2nd pref appears (rare)
+            rank = pref_map.get(str(pid), {}).get(pos, None)
+            badge = " ⚠" if rank is not None and rank >= 3 else ""
+            col.append(f"{name}{badge}")
         data[f"Series {s_idx}"] = col
 
     df = pd.DataFrame(data, index=positions)
@@ -139,12 +127,15 @@ def fairness_dashboard_df(assignment: List[Dict[str, Optional[str]]], roster_df:
             used.add(pid)
 
     rows = []
-    T = sum(1 for s in assignment for _ in s.values())
-    P = len(pid_to_name)
-
     for pid, name in pid_to_name.items():
-        vmins = int(roster_df.loc[roster_df["player_id"].astype(str) == pid, "varsity_minutes_recent"].iloc[0])
-        has_v = vmins > 0
+        # Optional varsity column handling (you don't have it; treated as 0)
+        if "varsity_minutes_recent" in roster_df.columns:
+            vmins = int(roster_df.loc[roster_df["player_id"].astype(str) == pid, "varsity_minutes_recent"].iloc[0])
+            has_v = vmins > 0
+        else:
+            vmins = 0
+            has_v = False
+
         lb, ub = compute_fairness_bounds(
             positions_count=len(assignment[0]) if assignment else 0,
             total_series=len(assignment),
@@ -166,11 +157,3 @@ def fairness_dashboard_df(assignment: List[Dict[str, Optional[str]]], roster_df:
 
     dash = pd.DataFrame(rows).sort_values(["flag_evenness_violation", "assigned_slots", "name"], ascending=[False, False, True])
     return dash
-
-def assignment_badges_for_cell(pid: str, pos: str, pref_map: Dict[str, Dict[str, int]]) -> str:
-    badges = []
-    rank = pref_map.get(str(pid), {}).get(pos, None)
-    # With 2-preference CSV, we only badge if beyond listed prefs (rare). Keep ⚠ for rank >=3.
-    if rank is not None and rank >= 3:
-        badges.append("⚠")
-    return " ".join(badges)
