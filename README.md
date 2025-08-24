@@ -1,10 +1,25 @@
-# FILE: README.md
-# Coach-Only Football Rotation Generator
+# README.md
+# Youth Football Rotation Generator (Streamlit)
 
-This Streamlit app helps coaches generate balanced offensive and defensive rotations from a player roster, enforcing fairness and position eligibility. All key constraints (minimum guarantee, evenness cap, position preferences) are honored, with prompts for any exceptions. The UI is coach-only with a simple PIN gate.
+A coach-first web app that enforces fair, balanced playing time while still optimizing for the strongest feasible lineups.
 
-## 90-Second Quickstart
-- **Run Locally:** Clone the repo and install dependencies. For example:
-  ```bash
-  pip install -r requirements.txt
-  streamlit run app.py
+## Features
+- **Fairness first** (minimum guarantee, evenness cap ±1)
+- **Win strength second** (maximize lineup StrengthIndex)
+- **Balance third** (pair strong/weak with position preference weights)
+- **Coach picks Series 1 starters**, solver smart-fills blanks
+- Varsity minutes reduce target slots slightly
+- Inline roster editing; CSV import/export
+- Configurable formations via `assets/formations.yaml`
+- ILP solver (PuLP) with **heuristic fallback**
+- Rotation Board, Fairness Dashboard, and CSV/PDF export
+
+## Install & Run
+```bash
+python -m venv .venv
+# Windows:
+. .venv/Scripts/Activate.ps1
+# macOS/Linux:
+# source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
