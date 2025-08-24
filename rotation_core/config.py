@@ -8,10 +8,10 @@ ENERGY_SCORE = {"Low": 0, "Medium": 1, "High": 2}
 
 DEFAULT_CONFIG = {
     "total_series": 8,
-    "varsity_penalty": 0.3,          # Ignored unless 'varsity_minutes_recent' column exists
+    "varsity_penalty": 0.3,          # Ignored unless 'varsity_minutes_recent' exists
     "evenness_cap_enabled": True,
     "evenness_cap_value": 1,         # ±1
-    "preference_weights": [1.0, 0.6],# 2-preference default
+    "preference_weights": [1.0, 0.6],
     "objective_lambda": 0.0,
     "objective_mu": 1.0,
     "random_seed": 42,
@@ -30,8 +30,7 @@ def load_formations_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-# -------- Position aliases (key = formation slot; values = allowed roster tokens) --------
-# Defense
+# --------- Alias support (unchanged from prior fix) ---------
 _POS_ALIASES = {
     "DT1": ["DT1", "DT"],
     "DT2": ["DT2", "DT"],
@@ -43,7 +42,6 @@ _POS_ALIASES = {
     "RDE": ["RDE", "DE"],
     "NT": ["NT"],
     "MLB": ["MLB", "LB_MIKE"],
-    # Alt 5-3 labels
     "DE_L": ["DE_L", "DE", "LDE"],
     "DE_R": ["DE_R", "DE", "RDE"],
     "LB_SAM": ["LB_SAM", "OLB"],
@@ -53,15 +51,12 @@ _POS_ALIASES = {
     "CB_R": ["CB_R", "CB", "RCB"],
     "FS": ["FS", "S"],
     "S": ["S", "FS"],
-    # Offense (for completeness if you use WR1/WR2 or RB1/RB2)
     "WR1": ["WR1", "WR"],
     "WR2": ["WR2", "WR"],
     "RB1": ["RB1", "HB", "RB", "AB"],
     "RB2": ["RB2", "HB", "RB", "AB"],
 }
-
 def aliases_for_position(pos: str) -> set[str]:
-    """Return the set of acceptable roster tokens for a given formation slot name."""
     p = str(pos).strip()
     vals = set([p])
     if p in _POS_ALIASES:
@@ -69,60 +64,59 @@ def aliases_for_position(pos: str) -> set[str]:
     return vals
 
 DEFAULT_FORMATIONS_YAML = textwrap.dedent("""\
-    Offense:
-      OFFENSE_11:
-        - QB
-        - AB
-        - HB
-        - WR
-        - Slot
-        - TE
-        - LT
-        - LG
-        - C
-        - RG
-        - RT
-      OFFENSE_11_RB2:
-        - QB
-        - RB1
-        - RB2
-        - WR1
-        - WR2
-        - TE
-        - LT
-        - LG
-        - C
-        - RG
-        - RT
+Offense:
+  OFFENSE_11:
+    - QB
+    - AB
+    - HB
+    - WR
+    - Slot
+    - TE
+    - LT
+    - LG
+    - C
+    - RG
+    - RT
+  OFFENSE_11_RB2:
+    - QB
+    - RB1
+    - RB2
+    - WR1
+    - WR2
+    - TE
+    - LT
+    - LG
+    - C
+    - RG
+    - RT
 
-    Defense:
-      DEFENSE_53:
-        - LDE
-        - DT1
-        - NT
-        - DT2
-        - RDE
-        - OLB1
-        - MLB
-        - OLB2
-        - LCB
-        - S
-        - RCB
-      DEFENSE_53_ALT:
-        - DE_L
-        - DT1
-        - NT
-        - DT2
-        - DE_R
-        - LB_SAM
-        - LB_MIKE
-        - LB_WILL
-        - CB_L
-        - FS
-        - CB_R
-    """)
+Defense:
+  DEFENSE_53:
+    - LDE
+    - DT1
+    - NT
+    - DT2
+    - RDE
+    - OLB1
+    - MLB
+    - OLB2
+    - LCB
+    - S
+    - RCB
+  DEFENSE_53_ALT:
+    - DE_L
+    - DT1
+    - NT
+    - DT2
+    - DE_R
+    - LB_SAM
+    - LB_MIKE
+    - LB_WILL
+    - CB_L
+    - FS
+    - CB_R
+""")
 
-# Sample roster for 2-preference schema WITHOUT any minutes columns
 DEFAULT_SAMPLE_ROSTER_CSV = textwrap.dedent("""\
 player_id,name,role_today,energy_today,off_pos_1,off_pos_2,def_pos_1,def_pos_2,notes
 1,Alex Carter,steady/reliable,High,QB,WR,LCB,S,
@@ -150,14 +144,73 @@ player_id,name,role_today,energy_today,off_pos_1,off_pos_2,def_pos_1,def_pos_2,n
 """)
 
 def ui_css() -> str:
+    # Inject Google Font + full theme (visual-only)
     return """
-    <style>
-      .stDataFrame, .stDataEditor { font-size: 0.95rem; }
-      .st-emotion-cache-10trblm, .st-emotion-cache-16idsys { padding-top: 0.5rem; }
-      .stButton > button { border-radius: 8px; }
-      .rotation-cell {
-        padding: 2px 6px; border-radius: 6px; display: inline-block;
-        border: 1px solid var(--secondary-text);
-      }
-    </style>
-    """
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0e14; 
+  --surface: rgba(18, 22, 31, 0.78);
+  --muted: rgba(24, 30, 44, 0.7);
+  --line:#2a3142;
+  --text:#eaf1fb; 
+  --sub:#B7C2D3;
+  --accent-h: 210; --accent-s: 90%; --accent-l: 60%;
+  --accent: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+  --good:#25d790; --warn:#ffb547; --danger:#ff6b6b;
+  --radius:16px; 
+  --shadow:0 12px 40px rgba(0,0,0,.35);
+}
+html, body { background:
+  radial-gradient(80vw 40vh at 10% -10%, rgba(21, 30, 48, .6), transparent 60%),
+  radial-gradient(50vw 35vh at 110% -20%, rgba(17, 23, 60, .5), transparent 60%),
+  linear-gradient(180deg,#0a0e13,#0e1219 220px) !important;
+}
+body, .stApp, .block-container { font-family: Inter, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--text); }
+.block-container { padding-top: 1rem; max-width: 1200px; }
+
+.card{
+  background: var(--surface) !important;
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  backdrop-filter: blur(12px);
+}
+.section{padding:18px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.small{color:var(--sub);font-size:12px}
+
+.stButton > button, .stDownloadButton > button {
+  background: rgba(10,14,22,.8); border:1px solid var(--line); color: var(--text);
+  border-radius:12px; padding:10px 12px;
+}
+.stButton > button:hover, .stDownloadButton > button:hover { transform: translateY(-1px); }
+
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
+  background: linear-gradient(180deg, hsl(var(--accent-h),85%,58%), hsl(var(--accent-h),80%,50%));
+  border-color: hsl(var(--accent-h), 80%, 45%); color:#071423; box-shadow: 0 8px 20px rgba(38,124,245,.25);
+}
+
+.stRadio > div { gap: 8px; }
+.stRadio label { padding:8px 10px; border:1px solid var(--line); border-radius:999px; background:var(--muted); }
+.stRadio .st-af { display:none; } /* hide default dots */
+
+input, select, textarea { color: var(--text) !important; }
+[data-baseweb="select"] > div { background: rgba(10,14,22,.8) !important; border-radius: 12px !important; }
+
+.stDataFrame, .stDataEditor { font-size: 0.95rem; }
+thead tr th { background: linear-gradient(180deg,rgba(22,29,44,.9),rgba(17,23,35,.9)) !important; border-bottom: 1px solid var(--line) !important; }
+tbody tr td { border-bottom: 1px solid var(--line) !important; }
+tbody tr:hover td { background: rgba(255,255,255,.02) !important; }
+
+.app{max-width:1100px;margin:18px auto;padding:0 14px}
+.drop{border:2px dashed var(--line);border-radius:14px;padding:14px;text-align:center;color:var(--sub);}
+.chip{
+  padding:8px 10px;border:1px solid var(--line);
+  border-radius:999px;background:var(--muted);cursor:default;
+}
+.chip.active{ background: var(--accent); color:#071423; border-color: hsl(var(--accent-h),75%,42%); }
+
+.caption { color: var(--sub); font-size: 12px; margin-top: 6px }
+</style>
+"""
