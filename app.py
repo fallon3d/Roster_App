@@ -21,6 +21,7 @@ from rotation_core.io import (
     generate_template_csv_bytes,
     load_formations_yaml,
     save_formations_yaml,
+    detect_pref_cols,
 )
 from rotation_core.models import AppConfig
 from rotation_core.ratings import compute_strength_index_series
@@ -55,11 +56,9 @@ if "app_config" not in st.session_state:
     st.session_state.app_config = AppConfig(**DEFAULT_CONFIG)
 
 if "starting_lineup" not in st.session_state:
-    # Dict[category]["formation_name"]["pos"] = player_id or None
     st.session_state.starting_lineup = {"Offense": {}, "Defense": {}}
 
 if "assignments" not in st.session_state:
-    # Dict[category]["formation_name"] = List[Dict[pos, player_id]]
     st.session_state.assignments = {"Offense": {}, "Defense": {}}
 
 if "random_seed" not in st.session_state:
@@ -73,24 +72,35 @@ with st.sidebar:
     varsity_penalty = st.number_input("Varsity penalty (slots)", min_value=0.0, max_value=2.0, value=0.3, step=0.1)
     evenness_cap_enabled = st.checkbox("Enforce Evenness Cap (± cap)", value=True)
     evenness_cap_value = st.number_input("Evenness Cap (±)", min_value=0, max_value=4, value=1, step=1)
-    pref_weights_str = st.text_input("Preference weights [w1,w2,w3,w4]", value="1.0,0.6,0.3,0.1")
+
+    # Determine how many preference columns exist in the uploaded roster (default to 2)
+    pref_count = 2
+    if st.session_state.roster_df is not None:
+        off_cols = detect_pref_cols(st.session_state.roster_df, "Offense")
+        def_cols = detect_pref_cols(st.session_state.roster_df, "Defense")
+        # Use max across sides for the UI hint (usually 2 now)
+        pref_count = max(len(off_cols), len(def_cols)) or 2
+
+    default_pw = ",".join(["1.0", "0.6"][:pref_count])
+    pref_weights_str = st.text_input("Preference weights (comma-separated)", value=default_pw)
+
     objective_lambda = st.number_input("λ (balance proxy)", min_value=0.0, max_value=10.0, value=0.0, step=0.1)
     objective_mu = st.number_input("μ (mismatch penalty)", min_value=0.0, max_value=10.0, value=1.0, step=0.1)
     st.session_state.random_seed = st.number_input("Random seed (deterministic)", min_value=0, max_value=10_000, value=42, step=1)
 
     def _parse_weights(s: str) -> List[float]:
         try:
-            parts = [float(x.strip()) for x in s.split(",")]
-            if len(parts) != 4:
+            parts = [float(x.strip()) for x in s.split(",") if x.strip() != ""]
+            if len(parts) < 1:
                 raise ValueError
             return parts
         except Exception:
-            st.warning("Invalid preference weights; reverting to [1.0,0.6,0.3,0.1].")
-            return [1.0, 0.6, 0.3, 0.1]
+            st.warning("Invalid preference weights; reverting to [1.0,0.6].")
+            return [1.0, 0.6]
 
     pref_weights = _parse_weights(pref_weights_str)
 
-    # Update app_config model
+    # Update config
     st.session_state.app_config.total_series = total_series
     st.session_state.app_config.varsity_penalty = varsity_penalty
     st.session_state.app_config.evenness_cap_enabled = evenness_cap_enabled
@@ -162,13 +172,10 @@ with tab1:
         st.info("No roster loaded yet. Download the sample or template from the sidebar.")
     else:
         df = st.session_state.roster_df.copy()
-
-        # Inline edit
         st.caption("Edit values below (double-click a cell). Use the “Add row” button to add new players.")
         edited = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="roster_editor")
         st.session_state.roster_df = edited
 
-        # Validate
         errors = validate_roster(edited)
         if errors:
             st.error("Validation errors:")
@@ -177,7 +184,6 @@ with tab1:
         else:
             st.success("Roster looks valid ✅")
 
-        # Save back to CSV
         st.download_button(
             "Download current roster.csv",
             data=save_roster_csv_bytes(st.session_state.roster_df),
@@ -206,10 +212,10 @@ with tab2:
 
             st.caption("Pick your Series 1 starters. Leave any position blank; the solver will smart-fill it.")
             start_map = {}
+
+            # Determine eligible columns dynamically
+            elig_cols = detect_pref_cols(df, category)
             for pos in positions:
-                # Eligible players for this pos (Category)
-                elig_col_prefix = "off" if category == "Offense" else "def"
-                elig_cols = [f"{elig_col_prefix}_pos_{i}" for i in range(1, 5)]
                 mask = df[elig_cols].apply(lambda r: pos in set(r.values), axis=1)
                 eligible_df = df[mask]
 
@@ -220,7 +226,6 @@ with tab2:
                     pid = val.split(" | ")[0]
                 start_map[pos] = pid
 
-            # Store starting lineup in session
             st.session_state.starting_lineup.setdefault(category, {})
             st.session_state.starting_lineup[category][formation_name] = start_map
 
@@ -255,18 +260,16 @@ with tab3:
             )
             excluded_ids = set(df[df["name"].isin(unavailable)]["player_id"].astype(str).tolist())
 
-            # Show quick math feasibility
+            # Feasibility notice
             T = len(positions) * st.session_state.app_config.total_series
             P = len(df) - len(excluded_ids)
             impossible_reason = check_impossible_minimums(T, P)
             if impossible_reason:
                 st.warning(impossible_reason)
 
-            # Run
             if st.button("Run Solver (ILP with heuristic fallback)"):
                 rng = np.random.default_rng(st.session_state.random_seed)
 
-                # starting lineup selection
                 starting = st.session_state.starting_lineup.get(category, {}).get(formation_name, {})
 
                 result = schedule_rotation(
@@ -279,10 +282,12 @@ with tab3:
                     rng=rng,
                 )
 
-                if result.error:
+                if result.error and result.assignment is None:
                     st.error(result.error)
                 else:
-                    st.session_state.assignments[category][formation_name] = result.assignment  # list[dict]
+                    st.session_state.assignments[category][formation_name] = result.assignment
+                    if result.error:
+                        st.warning(result.error)
                     st.success(f"Generated rotation for {category} / {formation_name} ✅")
 
 
@@ -313,8 +318,7 @@ with tab4:
                 )
 
                 st.dataframe(grid_df, use_container_width=True, height=min(600, 50 + 28 * len(grid_df)))
-
-                st.caption("Badges: (R)=newer/learning, (V)=varsity-reduced, (S)=sat last, (⚠)=3rd/4th preference")
+                st.caption("Badge: (⚠) indicates beyond top preferences (with 2-preference CSV this rarely appears).")
 
 
 # ---------- Tab 5: Fairness Dashboard ----------
@@ -356,7 +360,6 @@ with tab6:
             if not assignment:
                 st.info("No rotation generated yet.")
             else:
-                # CSV export (grid form)
                 grid_df = series_grid_to_df(
                     assignment=assignment,
                     positions=st.session_state.formations[category][formation_name],
@@ -367,7 +370,6 @@ with tab6:
                 fname = f"rotation_{category.lower()}_{formation_name.replace(' ','_')}.csv"
                 st.download_button("Download CSV", data=csv_bytes, file_name=fname, mime="text/csv")
 
-                # PDF export (single page per category/formation)
                 pdf_bytes = render_pdf(
                     category=category,
                     formation_name=formation_name,
