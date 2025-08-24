@@ -5,9 +5,9 @@ import re
 import yaml
 import pandas as pd
 
-# 2-preference CSV required columns
+# Minimal 2-preference schema WITHOUT minutes columns
 REQUIRED_COLUMNS = [
-    "player_id", "name", "season_minutes", "varsity_minutes_recent",
+    "player_id", "name",
     "role_today", "energy_today",
     "off_pos_1", "off_pos_2",
     "def_pos_1", "def_pos_2",
@@ -38,8 +38,6 @@ def load_roster_csv(file_like) -> pd.DataFrame:
 
     df["player_id"] = df["player_id"].astype(str)
     df["name"] = df["name"].astype(str)
-    for c in ["season_minutes", "varsity_minutes_recent"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
 
     # Normalize preference columns that exist (2 each required, but allow extras)
     for c in detect_pref_cols(df, "Offense") + detect_pref_cols(df, "Defense"):
