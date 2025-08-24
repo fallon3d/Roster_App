@@ -1,6 +1,5 @@
 # app.py
 import io
-import os
 from typing import Dict, List, Optional, Set
 
 import numpy as np
@@ -13,8 +12,8 @@ from rotation_core.config import (
     ENERGY_SCORE,
     load_formations_file,
     ensure_assets_exist,
-    ui_css,
-    aliases_for_position,  # visual uses eligible list via aliases
+    ui_css,                 # ← injects the 2025 visual theme (wrapped in <style>)
+    aliases_for_position,   # ← alias-aware eligibility in pickers (visual only)
 )
 from rotation_core.io import (
     load_roster_csv,
@@ -59,24 +58,52 @@ def _init_state():
 
 _init_state()
 
-# ---------- Sidebar (kept as advanced) ----------
+# ---------- Sidebar (advanced controls; logic unchanged) ----------
 with st.sidebar:
     st.header("⚙️ Advanced Config")
-    total_series = st.number_input("Total series", min_value=1, max_value=40, value=st.session_state.app_config.total_series, step=1)
-    evenness_cap_enabled = st.checkbox("Evenness Cap (±)", value=st.session_state.app_config.evenness_cap_enabled)
-    evenness_cap_value = st.number_input("Cap value", min_value=0, max_value=4, value=st.session_state.app_config.evenness_cap_value, step=1)
+    total_series = st.number_input(
+        "Total series",
+        min_value=1, max_value=40,
+        value=st.session_state.app_config.total_series,
+        step=1,
+    )
+    evenness_cap_enabled = st.checkbox(
+        "Evenness Cap (±)",
+        value=st.session_state.app_config.evenness_cap_enabled,
+        help="Keeps appearances within ±N where N is the cap value."
+    )
+    evenness_cap_value = st.number_input(
+        "Cap value",
+        min_value=0, max_value=4,
+        value=st.session_state.app_config.evenness_cap_value,
+        step=1,
+    )
 
-    # preference weights: auto-length based on roster (default 2)
+    # preference weights string (auto-length from CSV; defaults to 2 prefs)
     pref_count = 2
     if st.session_state.roster_df is not None:
         off_cols = detect_pref_cols(st.session_state.roster_df, "Offense")
         def_cols = detect_pref_cols(st.session_state.roster_df, "Defense")
         pref_count = max(len(off_cols), len(def_cols)) or 2
     default_pw = ",".join(["1.0", "0.6", "0.3", "0.1"][:pref_count])
-    pref_weights_str = st.text_input("Preference weights", value=default_pw, help="Comma separated; length auto-detected from CSV columns")
+    pref_weights_str = st.text_input(
+        "Preference weights",
+        value=default_pw,
+        help="Comma separated; first is strongest preference. Length auto-detected from CSV."
+    )
 
-    objective_mu = st.number_input("μ (mismatch penalty)", min_value=0.0, max_value=10.0, value=st.session_state.app_config.objective_mu, step=0.1)
-    rand = st.number_input("Random seed", min_value=0, max_value=10_000, value=st.session_state.random_seed, step=1)
+    objective_mu = st.number_input(
+        "μ (mismatch penalty)",
+        min_value=0.0, max_value=10.0,
+        value=st.session_state.app_config.objective_mu,
+        step=0.1,
+        help="Penalizes using lower preferences when alternatives exist."
+    )
+    rand = st.number_input(
+        "Random seed",
+        min_value=0, max_value=10_000,
+        value=st.session_state.random_seed, step=1
+    )
 
     def _parse_weights(s: str) -> List[float]:
         try:
@@ -85,10 +112,10 @@ with st.sidebar:
                 raise ValueError
             return parts
         except Exception:
-            st.warning("Invalid weights; falling back to [1.0,0.6].")
+            st.warning("Invalid weights; falling back to [1.0, 0.6].")
             return [1.0, 0.6]
 
-    # apply
+    # apply to session
     st.session_state.app_config.total_series = total_series
     st.session_state.app_config.evenness_cap_enabled = evenness_cap_enabled
     st.session_state.app_config.evenness_cap_value = evenness_cap_value
@@ -101,14 +128,26 @@ with st.sidebar:
     st.subheader("📄 Files")
     colT, colS = st.columns(2)
     with colT:
-        st.download_button("template.csv", data=generate_template_csv_bytes(), file_name="template.csv", mime="text/csv")
+        st.download_button(
+            "template.csv",
+            data=generate_template_csv_bytes(),
+            file_name="template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
     with colS:
         with open("assets/sample_roster.csv", "rb") as f:
-            st.download_button("sample_roster.csv", data=f.read(), file_name="sample_roster.csv", mime="text/csv")
+            st.download_button(
+                "sample_roster.csv",
+                data=f.read(),
+                file_name="sample_roster.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
     st.divider()
     st.subheader("📐 Formations")
-    if st.button("Reload formations.yaml"):
+    if st.button("Reload formations.yaml", use_container_width=True):
         st.session_state.formations = load_formations_yaml("assets/formations.yaml")
         st.success("Formations reloaded.")
 
@@ -118,14 +157,17 @@ st.markdown(
 <div class="app">
   <div class="card section">
     <h2>Youth Football Rotation Builder</h2>
-    <div class="small">Order: 1) Import & edit roster → 2) Choose segment → 3) Set Role & Energy → <b>1st Lineup</b>. Solver fills remaining series with fairness first, strength next.</div>
+    <div class="small">
+      Order: 1) Import & edit roster → 2) Choose segment → 3) Set Role & Energy → <b>1st Lineup</b>.
+      Solver fills remaining series with fairness first, strength next.
+    </div>
   </div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# helpers
+# ---------- Helpers to render staged UI ----------
 def _card_start():
     st.markdown('<div class="app"><div class="card section">', unsafe_allow_html=True)
 
@@ -174,7 +216,6 @@ if st.session_state.stage == 1:
     _chip_row()
     st.markdown("<h3>1) Import roster (CSV) & live edit</h3>", unsafe_allow_html=True)
 
-    # Drop area UI mimic: Streamlit uploader + buttons
     up_col1, up_col2, up_col3 = st.columns([2, 1, 1])
     with up_col1:
         file = st.file_uploader("Drop CSV here or click to select", type=["csv"])
@@ -186,7 +227,12 @@ if st.session_state.stage == 1:
                 st.success("Sample loaded into live editor.")
     with up_col3:
         st.caption("Download template")
-        st.download_button("Download template.csv", data=generate_template_csv_bytes(), file_name="template.csv", mime="text/csv")
+        st.download_button(
+            "Download template.csv",
+            data=generate_template_csv_bytes(),
+            file_name="template.csv",
+            mime="text/csv",
+        )
 
     if file is not None:
         try:
@@ -202,8 +248,6 @@ if st.session_state.stage == 1:
         editable_df = None
     else:
         df = st.session_state.roster_df.copy()
-
-        # Live editor with select options for positions (keeps your logic unchanged)
         st.caption("Live Editor")
         editable_df = st.data_editor(
             df,
@@ -246,13 +290,12 @@ elif st.session_state.stage == 2:
             if not formation_names:
                 st.warning("No formations defined for this segment.")
             else:
-                # if Defense, your default is 5-3 (DEFENSE_53)
                 default_idx = 0
                 if st.session_state.selected_category == "Defense" and "DEFENSE_53" in formation_names:
                     default_idx = formation_names.index("DEFENSE_53")
                 st.session_state.selected_formation = st.selectbox("Formation", formation_names, index=default_idx)
 
-        # Optional: mark unavailable players
+        # mark unavailable players (optional)
         df = st.session_state.roster_df
         unavailable = st.multiselect(
             "Mark players unavailable/injured (excluded for this match):",
@@ -261,7 +304,7 @@ elif st.session_state.stage == 2:
         )
         st.session_state.excluded_ids = set(df[df["name"].isin(unavailable)]["player_id"].astype(str).tolist())
 
-        # Feasibility notice
+        # feasibility notice
         positions = st.session_state.formations.get(st.session_state.selected_category, {}).get(st.session_state.selected_formation, [])
         T = len(positions) * st.session_state.app_config.total_series
         P = len(df) - len(st.session_state.excluded_ids)
@@ -287,7 +330,6 @@ elif st.session_state.stage == 3:
         _card_end()
     else:
         df = st.session_state.roster_df.copy()
-        # constrain values via data_editor column_config
         role_opts = list(ROLE_SCORE.keys())
         energy_opts = list(ENERGY_SCORE.keys())
         st.markdown('<div style="max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:12px;margin-top:8px">', unsafe_allow_html=True)
@@ -327,7 +369,7 @@ elif st.session_state.stage == 4:
         st.caption("Pick your Series 1 starters. Leave any position blank; smart fill will cover it.")
         start_map = st.session_state.starting_lineup.get(category, {}).get(formation_name, {}) or {}
 
-        # Render fancy grid of selects (styled by CSS)
+        # grid of selects
         cols = st.columns(3)
         for i, pos in enumerate(positions):
             if i % 3 == 0 and i > 0:
@@ -338,11 +380,16 @@ elif st.session_state.stage == 4:
                 opts = [""] + [f"{pid} | {all_players[str(pid)]}" for pid in eligible_df["player_id"].astype(str)]
                 cur = start_map.get(pos, "")
                 label = f"{pos}"
-                val = st.selectbox(label, options=opts, index=opts.index(cur) if cur in opts else 0, key=f"starter_{category}_{formation_name}_{pos}")
+                val = st.selectbox(
+                    label,
+                    options=opts,
+                    index=opts.index(cur) if cur in opts else 0,
+                    key=f"starter_{category}_{formation_name}_{pos}"
+                )
                 pid = val.split(" | ")[0] if val else ""
                 start_map[pos] = pid if pid else None
 
-        # Persist and validate duplicates
+        # persist + check dupes
         st.session_state.starting_lineup.setdefault(category, {})
         st.session_state.starting_lineup[category][formation_name] = start_map
         dupes = detect_duplicate_starters(start_map)
@@ -371,7 +418,7 @@ elif st.session_state.stage == 4:
                         st.warning(result.error)
                     st.success("Rotation generated ✅")
         with right:
-            st.caption("Tip: After generating, scroll to see the Rotation Board, Fairness Dashboard, and Export cards.")
+            st.caption("After generating, scroll to see the Rotation Board, Fairness Dashboard, and Export cards.")
 
         _card_end()
 
@@ -404,7 +451,13 @@ elif st.session_state.stage == 4:
             fname = f"rotation_{category.lower()}_{formation_name.replace(' ','_')}.csv"
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button("Download CSV", data=csv_bytes, file_name=fname, mime="text/csv", use_container_width=True)
+                st.download_button(
+                    "Download CSV",
+                    data=csv_bytes,
+                    file_name=fname,
+                    mime="text/csv",
+                    use_container_width=True,
+                )
             with col2:
                 pdf_bytes = render_pdf(
                     category=category,
@@ -413,7 +466,13 @@ elif st.session_state.stage == 4:
                     grid_df=grid_df,
                 )
                 pdf_name = f"rotation_{category.lower()}_{formation_name.replace(' ','_')}.pdf"
-                st.download_button("Download PDF", data=pdf_bytes, file_name=pdf_name, mime="application/pdf", use_container_width=True)
+                st.download_button(
+                    "Download PDF",
+                    data=pdf_bytes,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
             _card_end()
 
         # nav
