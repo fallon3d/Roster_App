@@ -1,11 +1,10 @@
 # rotation_core/solver_heuristic.py
 from __future__ import annotations
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 import numpy as np
 import pandas as pd
 
 from .ratings import compute_strength_index_series
-from .constraints import build_eligibility_maps
 
 def solve_greedy(
     df: pd.DataFrame,
@@ -24,18 +23,23 @@ def solve_greedy(
     strength = compute_strength_index_series(adf)
     pid_to_strength = dict(zip(adf["player_id"].astype(str), strength))
 
-    elig_off = build_eligibility_maps(adf, "Offense")
-    elig_def = build_eligibility_maps(adf, "Defense")
-
-    last_weight = preference_weights[-1] if preference_weights else 0.0
-
+    # helper: rank and weight
     def pref_rank(pid: str, pos: str) -> Optional[int]:
-        if pos in elig_off.get(pid, {}):
-            return elig_off[pid][pos]
-        if pos in elig_def.get(pid, {}):
-            return elig_def[pid][pos]
+        for i in range(1, 9):
+            col = f"off_pos_{i}"
+            if col in adf.columns:
+                v = adf.loc[adf["player_id"].astype(str) == pid, col]
+                if not v.empty and str(v.iloc[0]).strip() == pos:
+                    return i
+        for i in range(1, 9):
+            col = f"def_pos_{i}"
+            if col in adf.columns:
+                v = adf.loc[adf["player_id"].astype(str) == pid, col]
+                if not v.empty and str(v.iloc[0]).strip() == pos:
+                    return i
         return None
 
+    last_weight = preference_weights[-1] if preference_weights else 0.0
     def weight_for_rank(r: Optional[int]) -> float:
         if r is None:
             return 0.0
