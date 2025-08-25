@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict
 from copy import deepcopy
 
 import streamlit as st
@@ -25,21 +25,38 @@ from rotation_core.ui_helpers import by_id, display_name
 # -----------------------------
 st.set_page_config(layout="wide", page_title="Youth Football Rotation Builder")
 
+# Minimal CSS polish (dark, cards, chips)
+st.markdown(
+    """
+<style>
+.block-container{padding-top:1rem;}
+.card{border:1px solid #2a3142; background:rgba(18,22,31,.78); border-radius:12px; padding:16px; margin-bottom:12px;}
+.kv{display:flex; gap:.5rem; flex-wrap:wrap;}
+.kv .chip{background:#16202e; border:1px solid #223146; color:#eaf1fb; padding:2px 10px; border-radius:999px; font-size:.8rem;}
+.badge{background:#1f2a3a; border:1px solid #324862; color:#cfe1ff; padding:2px 10px; border-radius:999px; font-size:.8rem;}
+.hint{font-size:.85rem; color:#B7C2D3;}
+fieldset[disabled] .stButton>button{opacity:.6;}
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # -----------------------------
 # Session state init
 # -----------------------------
 def _ensure_state():
     ss = st.session_state
     ss.setdefault("stage", 1)
-    ss.setdefault("roster", [])  # List[Player]
+    ss.setdefault("roster", [])  # List[Player|dict]
     ss.setdefault("settings", Settings().model_dump())
     ss.setdefault("series_list", [])  # List[Series], currently only Series 1
     ss.setdefault("first_locked", False)
     ss.setdefault("gamestate", GameState().model_dump())
-    ss.setdefault("name_pool", [])  # list of names
+    ss.setdefault("name_pool", [])  # list[str]
     ss.setdefault("name_pool_mem_only", True)  # fallback if fs not writable
     ss.setdefault("override_modal", {"open": False, "pos": None})
     ss.setdefault("stats_modal_open", False)
+    ss.setdefault("_name_pool_loaded_once", False)
 
 _ensure_state()
 
@@ -57,18 +74,24 @@ def _set_settings(s: Settings):
 
 # --- compatibility rerun helper (Streamlit >=1.31 uses st.rerun) ---
 def _safe_rerun():
-    """Rerun compatible with both new and older Streamlit versions."""
     if hasattr(st, "rerun"):
         st.rerun()
-    else:  # fallback for older releases
+    else:
         st.experimental_rerun()
 
-def _load_sample_roster():
-    path = os.path.join(os.path.dirname(__file__), "assets", "sample_roster.csv")
-    with open(path, "r", encoding="utf-8") as f:
-        players = parse_roster_csv(f)
-    st.session_state["roster"] = [p.model_copy(update={}) for p in players]
+# segmented control fallback (older Streamlit)
+def _seg_control(label: str, options: List, index: int, key: str, format_func=None):
+    if hasattr(st, "segmented_control"):
+        return st.segmented_control(label, options=options, index=index, key=key, format_func=format_func or (lambda x: x))
+    # radio fallback
+    if format_func:
+        opts = [format_func(x) for x in options]
+        choice = st.radio(label, options=opts, index=index, key=key)
+        # map back
+        return options[opts.index(choice)]
+    return st.radio(label, options=options, index=index, key=key)
 
+# Name pool persistence
 def _save_name_pool_to_disk():
     try:
         data_dir = os.path.join(os.path.dirname(__file__), ".data")
@@ -91,153 +114,174 @@ def _load_name_pool_from_disk():
     except Exception:
         st.session_state["name_pool_mem_only"] = True
 
-# call once
-if st.session_state.get("_name_pool_loaded_once") is None:
+if not st.session_state["_name_pool_loaded_once"]:
     _load_name_pool_from_disk()
     st.session_state["_name_pool_loaded_once"] = True
 
-# -----------------------------
-# Helper views / small funcs
-# -----------------------------
-def _stage_nav():
-    col1, col2, col3, col4, col5 = st.columns([1,1,1,1,2])
-    with col1:
-        if st.button("Stage 1: Roster", key="btn_stage1"):
-            st.session_state["stage"] = 1
-    with col2:
-        if st.button("Stage 2: Segment", key="btn_stage2"):
-            st.session_state["stage"] = 2
-    with col3:
-        if st.button("Stage 3: Roles", key="btn_stage3"):
-            st.session_state["stage"] = 3
-    with col4:
-        if st.button("Stage 4: 1st Lineup", key="btn_stage4"):
-            st.session_state["stage"] = 4
-    with col5:
-        st.markdown("### &nbsp;&nbsp;**Game** Section below")
+def _load_sample_roster():
+    path = os.path.join(os.path.dirname(__file__), "assets", "sample_roster.csv")
+    with open(path, "r", encoding="utf-8") as f:
+        players = parse_roster_csv(f)
+    st.session_state["roster"] = [p.model_copy(update={}) for p in players]
 
+# -----------------------------
+# Helpers
+# -----------------------------
 def _positions_for_ui(settings: Settings) -> List[str]:
     return current_positions(settings)
 
 def _ensure_series1(settings: Settings):
     if not st.session_state["series_list"]:
-        # empty series with positions
         positions = {pos: "" for pos in _positions_for_ui(settings)}
         st.session_state["series_list"] = [Series(label="Series 1", positions=positions).model_dump()]
     else:
-        # ensure positions reflect current settings; preserve chosen ids where possible
         s1 = Series(**st.session_state["series_list"][0])
         want = _positions_for_ui(settings)
-        new_positions = {}
-        for pos in want:
-            new_positions[pos] = s1.positions.get(pos, "")
+        new_positions = {pos: s1.positions.get(pos, "") for pos in want}
         st.session_state["series_list"][0] = Series(label="Series 1", positions=new_positions).model_dump()
 
 def _roster_map() -> Dict[str, Player]:
     return by_id([Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]])
 
-def _eligible_labels_for_pos(pos: str, settings: Settings) -> List[str]:
-    roster = [Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]]
-    labels = []
-    for p in eligible_for_pos(roster, pos, settings):
-        labels.append(f"{p.id} • {p.Name} ({p.RoleToday}/{p.EnergyToday})")
-    return labels
-
 def _resolve_pid_from_label(lbl: str) -> str:
     return lbl.split(" • ", 1)[0] if " • " in lbl else lbl
 
-def _has_dupes(values: List[str]) -> bool:
-    vals = [v for v in values if v]
-    return len(vals) != len(set(vals))
+def _validate_no_dup_series1(s1: Series) -> bool:
+    vals = [pid for pid in s1.positions.values() if pid]
+    return len(vals) == len(set(vals))
 
-def _render_fairness_tag(pid: str, pos: str, counts_snap, roster: List[Player], settings: Settings):
-    if fairness_cap_exceeded(counts_snap, pos, pid, roster, settings):
-        st.markdown("⚠︎ Fairness")
+# Status chips
+def _status_bar():
+    settings = _settings_obj()
+    roster_count = len(st.session_state["roster"])
+    locked = st.session_state["first_locked"]
+    gs = _gamestate_obj()
+
+    chips = [
+        f'<span class="chip">Roster: {roster_count}</span>',
+        f'<span class="chip">Segment: {settings.segment}</span>',
+    ]
+    if settings.segment == "Defense":
+        chips.append(f'<span class="chip">Formation: {settings.def_form}</span>')
+    chips.append(f'<span class="chip">1st Lineup: {"Locked" if locked else "Drafting"}</span>')
+    chips.append(f'<span class="chip">Game: {"Active" if gs.active else "Idle"}</span>')
+
+    st.markdown(f'<div class="kv">{"".join(chips)}</div>', unsafe_allow_html=True)
+
+# -----------------------------
+# Sidebar (wizard + quick actions)
+# -----------------------------
+with st.sidebar:
+    st.header("Setup & Progress")
+    # Wizard stepper
+    options = [1, 2, 3, 4]
+    labels = {1: "1) Roster", 2: "2) Segment", 3: "3) Roles", 4: "4) First Lineup"}
+    cur_stage = st.session_state["stage"]
+    stage_choice = _seg_control("Stage", options, options.index(cur_stage), "nav_stage", format_func=lambda i: labels[i])
+    st.session_state["stage"] = stage_choice
+
+    st.divider()
+    _status_bar()
+
+    st.divider()
+    st.caption("Quick Links")
+    if st.button("Load Sample Roster", key="sb_load_sample"):
+        _load_sample_roster()
+        st.success("Sample roster loaded.")
+
+    # Downloads
+    tpl = build_template_csv()
+    st.download_button("Download CSV Template", data=tpl, file_name="roster_template.csv", key="sb_dl_tpl")
 
 # -----------------------------
 # Stage 1: Roster & Name Pool
 # -----------------------------
 def stage1():
-    st.subheader("Stage 1 — Import roster & live edit")
+    st.title("Youth Football Rotation Builder — Coach UI")
+    _status_bar()
 
-    c1, c2, c3, c4 = st.columns([1,1,1,2])
-    with c1:
-        if st.button("Load Sample", key="load_sample"):
-            _load_sample_roster()
-    with c2:
-        template = build_template_csv()
-        st.download_button("Download CSV Template", data=template, file_name="roster_template.csv", key="dl_tpl")
-    with c3:
-        up = st.file_uploader("Upload Roster CSV", type=["csv"], key="uploader_roster")
-        if up is not None:
-            st.session_state["roster"] = [p.model_dump() for p in parse_roster_csv(up)]
-            st.success(f"Loaded {len(st.session_state['roster'])} players.")
-    with c4:
-        st.info("Tip: You can edit cells directly and add/remove rows.")
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Stage 1 — Import roster & live edit")
 
-    # Live editor (data_editor with dynamic rows)
-    df = roster_to_dataframe([Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]])
-    edited = st.data_editor(
-        df,
-        num_rows="dynamic",
-        key="roster_editor",
-        use_container_width=True,
-        column_config={
-            "id": st.column_config.TextColumn("id", help="Stable identifier", disabled=True),
-            "Name": st.column_config.TextColumn("Name", required=True),
-            "Off1": st.column_config.TextColumn("Off1"),
-            "Off2": st.column_config.TextColumn("Off2"),
-            "Off3": st.column_config.TextColumn("Off3"),
-            "Off4": st.column_config.TextColumn("Off4"),
-            "Def1": st.column_config.TextColumn("Def1"),
-            "Def2": st.column_config.TextColumn("Def2"),
-            "Def3": st.column_config.TextColumn("Def3"),
-            "Def4": st.column_config.TextColumn("Def4"),
-            "RoleToday": st.column_config.SelectboxColumn("RoleToday", options=ROLES, required=True),
-            "EnergyToday": st.column_config.SelectboxColumn("EnergyToday", options=ENERGY, required=True),
-        }
-    )
-    st.session_state["roster"] = [p.model_dump() for p in dataframe_to_roster(edited)]
+        colA, colB = st.columns([1,1])
+        with colA:
+            up = st.file_uploader("Upload Roster CSV", type=["csv"], key="uploader_roster")
+            if up is not None:
+                st.session_state["roster"] = [p.model_dump() for p in parse_roster_csv(up)]
+                st.success(f"Loaded {len(st.session_state['roster'])} players.")
+        with colB:
+            st.markdown('<div class="hint">Tip: You can edit cells directly and add/remove rows.</div>', unsafe_allow_html=True)
 
-    with st.expander("Name Pool"):
-        c1, c2, c3 = st.columns([1,1,2])
-        with c1:
-            new_name = st.text_input("Add Name", key="np_add_name")
-            if st.button("Add to Pool", key="np_add_btn") and new_name.strip():
-                st.session_state["name_pool"].append(normalize_name(new_name))
-                _save_name_pool_to_disk()
-        with c2:
-            if st.button("Export Pool CSV", key="np_export"):
-                csv_bytes = ("Name\n" + "\n".join(st.session_state["name_pool"])).encode("utf-8")
-                st.download_button("Download Names CSV", data=csv_bytes, file_name="name_pool.csv", key="np_dl", use_container_width=True)
-        with c3:
-            upnp = st.file_uploader("Import Names CSV", type=["csv"], key="np_uploader")
-            if upnp is not None:
-                try:
-                    df_np = pd.read_csv(upnp)
-                    for n in df_np.get("Name", []):
-                        n = normalize_name(str(n))
-                        if n and n not in st.session_state["name_pool"]:
-                            st.session_state["name_pool"].append(n)
+        df = roster_to_dataframe([Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]])
+        edited = st.data_editor(
+            df,
+            num_rows="dynamic",
+            key="roster_editor",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.TextColumn("id", help="Stable identifier", disabled=True),
+                "Name": st.column_config.TextColumn("Name", required=True),
+                "Off1": st.column_config.TextColumn("Off1"),
+                "Off2": st.column_config.TextColumn("Off2"),
+                "Off3": st.column_config.TextColumn("Off3"),
+                "Off4": st.column_config.TextColumn("Off4"),
+                "Def1": st.column_config.TextColumn("Def1"),
+                "Def2": st.column_config.TextColumn("Def2"),
+                "Def3": st.column_config.TextColumn("Def3"),
+                "Def4": st.column_config.TextColumn("Def4"),
+                "RoleToday": st.column_config.SelectboxColumn("RoleToday", options=ROLES, required=True),
+                "EnergyToday": st.column_config.SelectboxColumn("EnergyToday", options=ENERGY, required=True),
+            }
+        )
+        st.session_state["roster"] = [p.model_dump() for p in dataframe_to_roster(edited)]
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        with st.expander("Name Pool", expanded=False):
+            c1, c2, c3 = st.columns([1,1,2])
+            with c1:
+                new_name = st.text_input("Add Name", key="np_add_name")
+                if st.button("Add to Pool", key="np_add_btn") and new_name.strip():
+                    st.session_state["name_pool"].append(normalize_name(new_name))
                     _save_name_pool_to_disk()
-                    st.success("Imported names.")
-                except Exception as e:
-                    st.error(f"Import error: {e}")
+            with c2:
+                if st.button("Export Pool CSV", key="np_export"):
+                    csv_bytes = ("Name\n" + "\n".join(st.session_state["name_pool"])).encode("utf-8")
+                    st.download_button("Download Names CSV", data=csv_bytes, file_name="name_pool.csv", key="np_dl", use_container_width=True)
+            with c3:
+                upnp = st.file_uploader("Import Names CSV", type=["csv"], key="np_uploader")
+                if upnp is not None:
+                    try:
+                        df_np = pd.read_csv(upnp)
+                        for n in df_np.get("Name", []):
+                            n = normalize_name(str(n))
+                            if n and n not in st.session_state["name_pool"]:
+                                st.session_state["name_pool"].append(n)
+                        _save_name_pool_to_disk()
+                        st.success("Imported names.")
+                    except Exception as e:
+                        st.error(f"Import error: {e}")
 
-        if st.session_state["name_pool"]:
-            st.write("Names in Pool:")
-            sel_to_add = st.multiselect("Select names to add to current roster", st.session_state["name_pool"], key="np_select")
-            if st.button("Add Selected To Roster", key="np_add_selected"):
-                # append blank rows with only Name
-                df_now = roster_to_dataframe([Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]])
-                for n in sel_to_add:
-                    df_now.loc[len(df_now)] = {"id": "", "Name": n, "Off1":"","Off2":"","Off3":"","Off4":"","Def1":"","Def2":"","Def3":"","Def4":"","RoleToday":"Connector","EnergyToday":"Medium"}
-                st.session_state["roster"] = [p.model_dump() for p in dataframe_to_roster(df_now)]
-                st.success(f"Added {len(sel_to_add)} to roster.")
+            if st.session_state["name_pool"]:
+                st.write("Names in Pool:")
+                sel_to_add = st.multiselect("Select names to add to current roster", st.session_state["name_pool"], key="np_select")
+                if st.button("Add Selected To Roster", key="np_add_selected"):
+                    df_now = roster_to_dataframe([Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]])
+                    for n in sel_to_add:
+                        df_now.loc[len(df_now)] = {
+                            "id": "", "Name": n,
+                            "Off1":"","Off2":"","Off3":"","Off4":"",
+                            "Def1":"","Def2":"","Def3":"","Def4":"",
+                            "RoleToday":"Connector","EnergyToday":"Medium"
+                        }
+                    st.session_state["roster"] = [p.model_dump() for p in dataframe_to_roster(df_now)]
+                    st.success(f"Added {len(sel_to_add)} to roster.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # Navigation
-    cprev, cnext = st.columns([1,6])
-    with cprev:
+    nav = st.columns([1,6])
+    with nav[0]:
         if st.button("Next →", key="stage1_next"):
             st.session_state["stage"] = 2
 
@@ -245,28 +289,34 @@ def stage1():
 # Stage 2: Segment & Formation
 # -----------------------------
 def stage2():
-    st.subheader("Stage 2 — Choose segment + defense formation")
+    st.title("Youth Football Rotation Builder — Coach UI")
+    _status_bar()
 
-    settings = _settings_obj()
-    c1, c2 = st.columns([1,1])
-    with c1:
-        seg = st.radio("Segment", options=["Offense","Defense"], index=0 if settings.segment=="Offense" else 1, key="seg_radio")
-        settings.segment = seg
-    with c2:
-        if settings.segment == "Defense":
-            def_form = st.radio("Defense Formation", options=["5-3","4-4"], index=0 if settings.def_form=="5-3" else 1, key="def_form_radio")
-            settings.def_form = def_form
-        else:
-            st.info("Defense formation is hidden for Offense.")
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Stage 2 — Choose segment + defense formation")
 
-    _set_settings(settings)
-    _ensure_series1(settings)
+        settings = _settings_obj()
+        c1, c2 = st.columns([1,1])
+        with c1:
+            seg = _seg_control("Segment", options=["Offense","Defense"], index=0 if settings.segment=="Offense" else 1, key="seg_radio")
+            settings.segment = seg
+        with c2:
+            if settings.segment == "Defense":
+                def_form = _seg_control("Defense Formation", options=["5-3","4-4"], index=0 if settings.def_form=="5-3" else 1, key="def_form_radio")
+                settings.def_form = def_form
+            else:
+                st.markdown('<div class="hint">Defense formation is hidden for Offense.</div>', unsafe_allow_html=True)
 
-    cprev, cnext = st.columns([1,6])
-    with cprev:
+        _set_settings(settings)
+        _ensure_series1(settings)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    nav = st.columns([1,6])
+    with nav[0]:
         if st.button("← Back", key="stage2_back"):
             st.session_state["stage"] = 1
-    with cnext:
+    with nav[1]:
         if st.button("Next →", key="stage2_next"):
             st.session_state["stage"] = 3
 
@@ -274,45 +324,51 @@ def stage2():
 # Stage 3: Role & Energy
 # -----------------------------
 def stage3():
-    st.subheader("Stage 3 — Set Role & Energy (two-tap equivalents)")
+    st.title("Youth Football Rotation Builder — Coach UI")
+    _status_bar()
+
     roster = [Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]]
     if not roster:
         st.warning("Add some players in Stage 1.")
         return
 
-    # Render per-player controls with deterministic keys
-    for idx, p in enumerate(roster):
-        c1, c2, c3 = st.columns([2,1,1])
-        with c1:
-            st.write(f"**{p.Name}**")
-        with c2:
-            role = st.radio("Role", ROLES, index=ROLES.index(p.RoleToday), key=f"role_{p.id}")
-        with c3:
-            energy = st.radio("Energy", ENERGY, index=ENERGY.index(p.EnergyToday), key=f"energy_{p.id}")
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Stage 3 — Set Role & Energy")
 
-        # update
-        p.RoleToday = role
-        p.EnergyToday = energy
+    with st.form(key="roles_form"):
+        for p in roster:
+            c1, c2, c3 = st.columns([2,1,1])
+            with c1:
+                st.write(f"**{p.Name}**")
+            with c2:
+                role = _seg_control("Role", ROLES, index=ROLES.index(p.RoleToday), key=f"role_{p.id}")
+            with c3:
+                energy = _seg_control("Energy", ENERGY, index=ENERGY.index(p.EnergyToday), key=f"energy_{p.id}")
+            p.RoleToday = role
+            p.EnergyToday = energy
+            st.markdown("---")
 
-    st.session_state["roster"] = [p.model_dump() for p in roster]
+        submitted = st.form_submit_button("Save Roles & Energy")
+        if submitted:
+            st.session_state["roster"] = [p.model_dump() for p in roster]
+            st.success("Saved player roles & energy.")
 
-    cprev, cnext = st.columns([1,6])
-    with cprev:
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    nav = st.columns([1,6])
+    with nav[0]:
         if st.button("← Back", key="stage3_back"):
             st.session_state["stage"] = 2
-    with cnext:
+    with nav[1]:
         if st.button("Next →", key="stage3_next"):
             st.session_state["stage"] = 4
 
 # -----------------------------
 # Stage 4: 1st Lineup Editor + Lock
 # -----------------------------
-def _validate_no_dup_series1(s1: Series) -> bool:
-    vals = [pid for pid in s1.positions.values() if pid]
-    return len(vals) == len(set(vals))
-
 def stage4():
-    st.subheader("Stage 4 — First Lineup (Series 1)")
+    st.title("Youth Football Rotation Builder — Coach UI")
+    _status_bar()
 
     settings = _settings_obj()
     roster = [Player(**p) if isinstance(p, dict) else p for p in st.session_state["roster"]]
@@ -323,97 +379,84 @@ def stage4():
     _ensure_series1(settings)
     s1 = Series(**st.session_state["series_list"][0])
 
-    # Suggest button (fills empty only)
-    c1, c2 = st.columns([1,3])
-    with c1:
-        if st.button("Auto-Fill Empty", key="s1_autofill"):
-            sugg = suggest_series1(roster, settings)
-            for pos, pid in sugg.positions.items():
-                if not s1.positions.get(pos):
-                    s1.positions[pos] = pid
-            st.session_state["series_list"][0] = s1.model_dump()
-    with c2:
-        st.info("Prevent duplicates within series; lock hides controls and saves Series 1.")
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Stage 4 — First Lineup (Series 1)")
 
-    # Editor per position
-    pos_list = current_positions(settings)
-    pid_to_player = by_id(roster)
-    for pos in pos_list:
-        elig = eligible_for_pos(roster, pos, settings)
-        options = [""] + [f"{p.id} • {p.Name} ({p.RoleToday}/{p.EnergyToday})" for p in elig]
-        current_pid = s1.positions.get(pos, "")
-        current_label = ""
-        if current_pid and current_pid in pid_to_player:
-            pp = pid_to_player[current_pid]
-            current_label = f"{pp.id} • {pp.Name} ({pp.RoleToday}/{pp.EnergyToday})"
+    with st.form(key="s1_form"):
+        c1, c2 = st.columns([1,3])
+        with c1:
+            if st.form_submit_button("Auto-Fill Empty", use_container_width=True):
+                sugg = suggest_series1(roster, settings)
+                for pos, pid in sugg.positions.items():
+                    if not s1.positions.get(pos):
+                        s1.positions[pos] = pid
+                st.session_state["series_list"][0] = s1.model_dump()
+                st.success("Filled empty positions.")
+                _safe_rerun()
+        with c2:
+            st.markdown('<div class="hint">Prevent duplicates; locking hides controls and saves Series 1.</div>', unsafe_allow_html=True)
 
-        sel = st.selectbox(
-            f"{pos}",
-            options=options,
-            index=options.index(current_label) if current_label in options else 0,
-            key=f"s1_{pos}",
-        )
-        new_pid = _resolve_pid_from_label(sel) if sel else ""
-        s1.positions[pos] = new_pid
+        pos_list = current_positions(settings)
+        pid_to_player = by_id(roster)
+        for pos in pos_list:
+            elig = eligible_for_pos(roster, pos, settings)
+            options = [""] + [f"{p.id} • {p.Name} ({p.RoleToday}/{p.EnergyToday})" for p in elig]
+            current_pid = s1.positions.get(pos, "")
+            current_label = ""
+            if current_pid and current_pid in pid_to_player:
+                pp = pid_to_player[current_pid]
+                current_label = f"{pp.id} • {pp.Name} ({pp.RoleToday}/{pp.EnergyToday})"
 
-    # Validate no duplicates
-    ok = _validate_no_dup_series1(s1)
-    if not ok:
-        st.error("Duplicate player in Series 1. Fix before locking.")
+            sel = st.selectbox(
+                f"{pos}",
+                options=options,
+                index=options.index(current_label) if current_label in options else 0,
+                key=f"s1_{pos}",
+            )
+            new_pid = _resolve_pid_from_label(sel) if sel else ""
+            s1.positions[pos] = new_pid
 
-    # Lock
-    cprev, cnext = st.columns([1,6])
-    with cprev:
-        if st.button("← Back", key="stage4_back"):
-            st.session_state["stage"] = 3
-    with cnext:
-        if st.button("Lock 1st Lineup", key="lock_s1", disabled=not ok):
-            # auto-fill any remaining gaps if possible via suggestion
+        ok = _validate_no_dup_series1(s1)
+        if not ok:
+            st.error("Duplicate player in Series 1. Fix before locking.")
+
+        lock = st.form_submit_button("Lock 1st Lineup ✓", disabled=not ok)
+        if lock:
             sugg = suggest_series1(roster, settings)
             for pos, pid in s1.positions.items():
                 if not pid:
                     s1.positions[pos] = sugg.positions.get(pos, "")
             st.session_state["series_list"][0] = s1.model_dump()
             st.session_state["first_locked"] = True
-            st.success("1st Lineup Locked ✓")
+            st.success("1st Lineup Locked.")
+            _safe_rerun()
 
-    # Show badge if locked
     if st.session_state["first_locked"]:
-        st.markdown("#### ✅ 1st Lineup Locked")
+        st.markdown('<span class="badge">1st Lineup Locked</span>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    nav = st.columns([1,6])
+    with nav[0]:
+        if st.button("← Back", key="stage4_back"):
+            st.session_state["stage"] = 3
 
 # -----------------------------
-# Game Section
+# Game helpers
 # -----------------------------
-def _render_lineup_card(title: str, assigns: Dict[str, str], roster_map: Dict[str, Player], show_change: bool, counts_snap, roster: List[Player], settings: Settings):
-    st.markdown(f"**{title}**")
-    for pos in current_positions(settings):
-        pid = assigns.get(pos, "")
-        label = roster_map[pid].Name if pid and pid in roster_map else "—"
-        cols = st.columns([2,4,2])
-        with cols[0]:
-            st.write(pos)
-        with cols[1]:
-            st.write(label)
-        with cols[2]:
-            if show_change:
-                if st.button("Change", key=f"chg_{settings.segment}_{pos}_{_gamestate_obj().turn}"):
-                    st.session_state["override_modal"] = {"open": True, "pos": pos}
-
 def _compute_current_and_next(gs: GameState, roster: List[Player], settings: Settings, series_list: List[Series]):
-    # snapshots
     planned = series_list[gs.idx_cycle % len(series_list)]
     manual = gs.manual_overrides.get(gs.turn, {})
     assigns_cur, counts_cur = compute_effective_lineup(
         gs.idx_cycle, planned, clone_counts_cat(gs.played_counts_cat), dict(gs.pos_idx),
         manual, roster, settings
     )
-    # hypothetical next: advance snapshots by applying current assigns
+    # simulate next snapshot
     snap_counts_next = clone_counts_cat(gs.played_counts_cat)
+    from rotation_core.engine import inc_cat
     for pos, pid in assigns_cur.items():
         if pid:
-            from rotation_core.engine import inc_cat
             inc_cat(snap_counts_next, pos, pid)
-    # pos pointers hypothetical: advance to used pid +1
     snap_pos_next = dict(gs.pos_idx)
     cycles = build_pos_cycles(roster, settings)
     for pos, pid in assigns_cur.items():
@@ -422,23 +465,30 @@ def _compute_current_and_next(gs: GameState, roster: List[Player], settings: Set
             idx = cyc.index(pid)
             snap_pos_next[pos] = (idx + 1) % len(cyc)
 
-    # planned for next
     planned_next = series_list[(gs.idx_cycle + 1) % len(series_list)]
     manual_next = gs.manual_overrides.get(gs.turn + 1, {})
-    assigns_next, counts_next = compute_effective_lineup(
+    assigns_next, _ = compute_effective_lineup(
         (gs.idx_cycle + 1), planned_next, snap_counts_next, snap_pos_next, manual_next, roster, settings
     )
     return assigns_cur, assigns_next
 
-def _override_modal(roster: List[Player], settings: Settings):
+def _open_override_dialog(roster: List[Player], settings: Settings):
+    # Use modern dialog if available for a true modal UX; fallback to inline panel.
+    if hasattr(st, "dialog"):
+        @st.dialog("Change Player")
+        def _dlg():
+            _override_panel(roster, settings)
+        _dlg()
+    else:
+        st.markdown("---")
+        _override_panel(roster, settings)
+
+def _override_panel(roster: List[Player], settings: Settings):
     gs = _gamestate_obj()
     pos = st.session_state["override_modal"].get("pos")
     if not pos:
         return
-    roster_map = by_id(roster)
     counts_snap = clone_counts_cat(gs.played_counts_cat)
-
-    st.write(f"### Change: {pos}")
     elig = eligible_for_pos(roster, pos, settings)
     options = []
     for p in elig:
@@ -451,7 +501,6 @@ def _override_modal(roster: List[Player], settings: Settings):
         if st.button("Apply Override", key=f"ov_apply_{pos}_{gs.turn}") and sel:
             pid = _resolve_pid_from_label(sel.split(" ⚠︎")[0])
             gs.manual_overrides.setdefault(gs.turn, {})
-            # ensure no duplicate in the planned effective lineup — engine protects, we just record desired override
             gs.manual_overrides[gs.turn][pos] = pid
             _set_gamestate(gs)
             st.session_state["override_modal"] = {"open": False, "pos": None}
@@ -461,6 +510,33 @@ def _override_modal(roster: List[Player], settings: Settings):
             st.session_state["override_modal"] = {"open": False, "pos": None}
             _safe_rerun()
 
+def _render_lineup_table(assigns: Dict[str, str], roster_map: Dict[str, Player], allow_change: bool,
+                         counts_snap, roster: List[Player], settings: Settings, turn_key: str):
+    for pos in current_positions(settings):
+        pid = assigns.get(pos, "")
+        name = roster_map[pid].Name if pid and pid in roster_map else "—"
+        cols = st.columns([2,5,2,2])
+        with cols[0]:
+            st.write(pos)
+        with cols[1]:
+            # fairness tag on already-chosen player (snapshot check)
+            if pid and fairness_cap_exceeded(counts_snap, pos, pid, roster, settings):
+                st.write(f"{name}  ⚠︎")
+            else:
+                st.write(name)
+        with cols[2]:
+            if pid:
+                st.caption(roster_map[pid].RoleToday + " / " + roster_map[pid].EnergyToday)
+            else:
+                st.caption("—")
+        with cols[3]:
+            if allow_change:
+                if st.button("Change", key=f"chg_{settings.segment}_{pos}_{turn_key}"):
+                    st.session_state["override_modal"] = {"open": True, "pos": pos}
+
+# -----------------------------
+# Game Section
+# -----------------------------
 def game_section():
     st.markdown("---")
     st.subheader("Game")
@@ -474,82 +550,89 @@ def game_section():
         st.info("Lock the 1st lineup in Stage 4 to enable Game.")
         return
     series_list = [Series(**s) if isinstance(s, dict) else s for s in st.session_state["series_list"]]
-    s1 = series_list[0]
 
     gs = _gamestate_obj()
 
-    c1, c2, c3, c4, c5 = st.columns([1,1,1,1,2])
-    with c1:
-        if st.button("Start Game", key="btn_start", disabled=gs.active):
-            start_game(gs, roster, settings, series_list)
-            _set_gamestate(gs)
-            st.success("Game started")
-    with c2:
-        if st.button("End Series", key="btn_end_series", disabled=not gs.active):
-            end_series(gs, roster, settings, series_list)
-            _set_gamestate(gs)
-            st.success("Series ended")
-    with c3:
-        if st.button("End Game", key="btn_end_game", disabled=not gs.active):
-            summary = end_game(gs)
-            _set_gamestate(gs)
-            st.success(f"Game ended. Series played: {summary.get('turns',0)}")
-    with c4:
-        if st.button("Review Last Game", key="btn_review", disabled=gs.active or len(gs.history)==0):
-            st.session_state["stats_modal_open"] = True
-    with c5:
-        if st.button("Real-time Stats", key="btn_stats", disabled=not (gs.active or len(gs.history)>0)):
-            st.session_state["stats_modal_open"] = True
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        c1, c2, c3, c4, c5 = st.columns([1,1,1,1,2])
+        with c1:
+            if st.button("Start Game", key="btn_start", disabled=gs.active):
+                start_game(gs, roster, settings, series_list)
+                _set_gamestate(gs)
+                st.success("Game started")
+        with c2:
+            if st.button("End Series", key="btn_end_series", disabled=not gs.active):
+                end_series(gs, roster, settings, series_list)
+                _set_gamestate(gs)
+                st.success("Series ended")
+        with c3:
+            if st.button("End Game", key="btn_end_game", disabled=not gs.active):
+                summary = end_game(gs)
+                _set_gamestate(gs)
+                st.success(f"Game ended. Series played: {summary.get('turns',0)}")
+        with c4:
+            if st.button("Review Last Game", key="btn_review", disabled=gs.active or len(gs.history)==0):
+                st.session_state["stats_modal_open"] = True
+        with c5:
+            if st.button("Real-time Stats", key="btn_stats", disabled=not (gs.active or len(gs.history)>0)):
+                st.session_state["stats_modal_open"] = True
 
-    # Export played rotations CSV
-    if len(gs.history) > 0:
-        csv_bytes = export_played_rotations_csv(gs.history)
-        st.download_button("Download played-rotations.csv", data=csv_bytes, file_name="played-rotations.csv", key="dl_played")
+        if len(gs.history) > 0:
+            csv_bytes = export_played_rotations_csv(gs.history)
+            st.download_button(
+                "Download played-rotations.csv",
+                data=csv_bytes,
+                file_name="played-rotations.csv",
+                key="dl_played",
+                use_container_width=True
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # Carousel: Previous | Current | Next
+    # Carousel as tabs (mobile friendly)
     roster_map = by_id(roster)
-    cprev, ccur, cnext = st.columns([1,1,1])
-    with cprev:
-        st.markdown("### Previous")
+    tabs = st.tabs(["Previous", "Current", "Next"])
+    with tabs[0]:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
         if len(gs.history) == 0:
             st.write("—")
         else:
             prev = gs.history[-1]["assignments"]
-            _render_lineup_card("Prev", prev, roster_map, False, gs.played_counts_cat, roster, settings)
-    with ccur:
-        st.markdown("### Current")
-        if not gs.active:
-            st.write("—")
-        else:
-            cur, nxt = _compute_current_and_next(gs, roster, settings, series_list)
-            _render_lineup_card("Current", cur, roster_map, True, gs.played_counts_cat, roster, settings)
-    with cnext:
-        st.markdown("### Next")
-        if not gs.active:
-            st.write("—")
-        else:
-            cur, nxt = _compute_current_and_next(gs, roster, settings, series_list)
-            _render_lineup_card("Next", nxt, roster_map, False, gs.played_counts_cat, roster, settings)
+            _render_lineup_table(prev, roster_map, False, gs.played_counts_cat, roster, settings, f"prev_{gs.turn}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # Change picker "modal"
+    with tabs[1]:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        if not gs.active:
+            st.write("—")
+        else:
+            cur, nxt = _compute_current_and_next(gs, roster, settings, series_list)
+            _render_lineup_table(cur, roster_map, True, gs.played_counts_cat, roster, settings, f"cur_{gs.turn}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with tabs[2]:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        if not gs.active:
+            st.write("—")
+        else:
+            cur, nxt = _compute_current_and_next(gs, roster, settings, series_list)
+            _render_lineup_table(nxt, roster_map, False, gs.played_counts_cat, roster, settings, f"next_{gs.turn}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Change picker modal/panel
     if st.session_state["override_modal"]["open"]:
-        st.markdown("---")
-        _override_modal(roster, settings)
+        _open_override_dialog(roster, settings)
 
     # Stats modal/expander
     if st.session_state["stats_modal_open"]:
         st.markdown("---")
         st.markdown("### Stats")
         gs = _gamestate_obj()
-        # simple summary of counts + fairness debt
-        # Show totals per player
         df_counts = pd.DataFrame([
             {"Player": roster_map.get(pid).Name if pid in roster_map else pid, "Appearances": cnt}
             for pid, cnt in gs.played_counts.items()
         ]).sort_values("Appearances", ascending=False)
         st.dataframe(df_counts, use_container_width=True)
-
-        # Fairness by category
         for cat, mp in gs.played_counts_cat.items():
             st.markdown(f"**{cat}**")
             dfc = pd.DataFrame([
@@ -561,21 +644,8 @@ def game_section():
             st.session_state["stats_modal_open"] = False
 
 # -----------------------------
-# Layout render
+# Router
 # -----------------------------
-st.title("Youth Football Rotation Builder — Coach UI (Streamlit)")
-
-# Stage navigation header
-def _stage_navbar():
-    cols = st.columns(4)
-    labels = ["1) Roster", "2) Segment", "3) Roles", "4) First Lineup"]
-    for i, c in enumerate(cols, start=1):
-        with c:
-            if st.button(labels[i-1], key=f"stage_nav_{i}"):
-                st.session_state["stage"] = i
-
-_stage_navbar()
-
 stage = st.session_state["stage"]
 if stage == 1:
     stage1()
