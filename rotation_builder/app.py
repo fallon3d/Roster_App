@@ -55,6 +55,14 @@ def _set_gamestate(gs: GameState):
 def _set_settings(s: Settings):
     st.session_state["settings"] = s.model_dump()
 
+# --- compatibility rerun helper (Streamlit >=1.31 uses st.rerun) ---
+def _safe_rerun():
+    """Rerun compatible with both new and older Streamlit versions."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # fallback for older releases
+        st.experimental_rerun()
+
 def _load_sample_roster():
     path = os.path.join(os.path.dirname(__file__), "assets", "sample_roster.csv")
     with open(path, "r", encoding="utf-8") as f:
@@ -443,15 +451,15 @@ def _override_modal(roster: List[Player], settings: Settings):
         if st.button("Apply Override", key=f"ov_apply_{pos}_{gs.turn}") and sel:
             pid = _resolve_pid_from_label(sel.split(" ⚠︎")[0])
             gs.manual_overrides.setdefault(gs.turn, {})
-            # ensure no duplicate in the planned effective lineup — we'll let engine handle duplicates, but here we just set
+            # ensure no duplicate in the planned effective lineup — engine protects, we just record desired override
             gs.manual_overrides[gs.turn][pos] = pid
             _set_gamestate(gs)
             st.session_state["override_modal"] = {"open": False, "pos": None}
-            st.experimental_rerun()
+            _safe_rerun()
     with c2:
         if st.button("Cancel", key=f"ov_cancel_{pos}_{gs.turn}"):
             st.session_state["override_modal"] = {"open": False, "pos": None}
-            st.experimental_rerun()
+            _safe_rerun()
 
 def game_section():
     st.markdown("---")
@@ -557,7 +565,16 @@ def game_section():
 # -----------------------------
 st.title("Youth Football Rotation Builder — Coach UI (Streamlit)")
 
-_stage_nav()
+# Stage navigation header
+def _stage_navbar():
+    cols = st.columns(4)
+    labels = ["1) Roster", "2) Segment", "3) Roles", "4) First Lineup"]
+    for i, c in enumerate(cols, start=1):
+        with c:
+            if st.button(labels[i-1], key=f"stage_nav_{i}"):
+                st.session_state["stage"] = i
+
+_stage_navbar()
 
 stage = st.session_state["stage"]
 if stage == 1:
