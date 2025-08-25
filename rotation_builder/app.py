@@ -79,17 +79,55 @@ def _safe_rerun():
     else:
         st.experimental_rerun()
 
-# segmented control fallback (older Streamlit)
+# segmented control helper with robust fallback and signature handling
 def _seg_control(label: str, options: List, index: int, key: str, format_func=None):
+    """Return a segmented control (if available) else a radio with the same semantics.
+    Handles both 'index' and 'selection' signatures for segmented_control across versions.
+    """
+    # Clamp index to valid range
+    if not options:
+        return None
+    if index is None or index < 0 or index >= len(options):
+        index = 0
+
+    # Prefer segmented_control if present
     if hasattr(st, "segmented_control"):
-        return st.segmented_control(label, options=options, index=index, key=key, format_func=format_func or (lambda x: x))
-    # radio fallback
+        try:
+            # Newer signature often supports index + format_func
+            return st.segmented_control(
+                label=label,
+                options=options,
+                index=index,
+                key=key,
+                format_func=format_func or (lambda x: x),
+            )
+        except TypeError:
+            # Fallback to selection signature
+            try:
+                selection = options[index]
+                return st.segmented_control(
+                    label=label,
+                    options=options,
+                    selection=selection,
+                    key=key,
+                    format_func=format_func or (lambda x: x),
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # Radio fallback
     if format_func:
-        opts = [format_func(x) for x in options]
-        choice = st.radio(label, options=opts, index=index, key=key)
-        # map back
-        return options[opts.index(choice)]
-    return st.radio(label, options=options, index=index, key=key)
+        fopts = [format_func(x) for x in options]
+    else:
+        fopts = options
+    choice = st.radio(label, options=fopts, index=index, key=key)
+    # Map back if formatted
+    if fopts is not options:
+        selected_index = fopts.index(choice)
+        return options[selected_index]
+    return choice
 
 # Name pool persistence
 def _save_name_pool_to_disk():
@@ -177,7 +215,8 @@ with st.sidebar:
     options = [1, 2, 3, 4]
     labels = {1: "1) Roster", 2: "2) Segment", 3: "3) Roles", 4: "4) First Lineup"}
     cur_stage = st.session_state["stage"]
-    stage_choice = _seg_control("Stage", options, options.index(cur_stage), "nav_stage", format_func=lambda i: labels[i])
+    idx = options.index(cur_stage) if cur_stage in options else 0
+    stage_choice = _seg_control("Stage", options, idx, "nav_stage", format_func=lambda i: labels[i])
     st.session_state["stage"] = stage_choice
 
     st.divider()
