@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.streamlit/
+.DS_Store
+.idea/
+.vscode/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+.envrc
+*.swp
+*.swo
